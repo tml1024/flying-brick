@@ -1,0 +1,40 @@
+<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+
+<PlaneHTMLConfig>
+    <EngineDisplay>
+        <Gauge>
+            <Type>DoubleVertical</Type>
+            <Style>
+                <Height>70</Height>
+            </Style>
+            <ID>Piston_RPMGauge</ID>
+            <Title></Title>
+            <Unit>RPM</Unit>
+            <Minimum>0</Minimum>
+            <Maximum>3000</Maximum>
+            <Value>
+                <Simvar name="PROP RPM:1" unit="rpm"/>
+            </Value>
+            <Value2>
+                <Simvar name="PROP RPM:2" unit="rpm"/>
+            </Value2>
+            <ColorZone>
+                <Color>green</Color>
+                <Begin>0</Begin>
+                <End>2325</End>
+            </ColorZone>
+            <ColorZone>
+                <Color>yellow</Color>
+                <Begin>2325</Begin>
+                <End>2375</End>
+            </ColorZone>
+            <ColorZone>
+                <Color>red</Color>
+                <Begin>2375</Begin>
+                <End>3000</End>
+            </ColorZone>
+            <GraduationLength text="True">600</GraduationLength>
+        </Gauge>
+    </EngineDisplay>
+</PlaneHTMLConfig>
+

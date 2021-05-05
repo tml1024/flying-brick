@@ -1,0 +1,32 @@
+<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+
+<AssetPackage Name="tangomikelima-aircraft-flying-brick" Version="1.0.0">
+    <ItemSettings>
+        <ContentType>AIRCRAFT</ContentType>
+        <Title>Flying Brick</Title>b
+        <Manufacturer>Tango Mike Lima</Manufacturer>
+        <Creator>Tango Mike Lima</Creator>
+    </ItemSettings>
+    <Flags>
+        <VisibleInStore>false</VisibleInStore>
+        <CanBeReferenced>false</CanBeReferenced>
+    </Flags>
+    <AssetGroups>
+        <AssetGroup Name="ContentInfo">
+            <Type>ContentInfo</Type>
+            <Flags>
+                <FSXCompatibility>false</FSXCompatibility>
+            </Flags>
+            <AssetDir>PackageDefinitions\tangomikelima-aircraft-flying-brick\ContentInfo\</AssetDir>
+            <OutputDir>ContentInfo\tangomikelima-aircraft-flying-brick\</OutputDir>
+        </AssetGroup>
+        <AssetGroup Name="flying-brick">
+            <Type>SimObject</Type>
+            <Flags>
+                <FSXCompatibility>false</FSXCompatibility>
+            </Flags>
+            <AssetDir>PackageSources\SimObjects\Airplanes\FlyingBrick\</AssetDir>
+            <OutputDir>SimObjects\Airplanes\FlyingBrick\</OutputDir>
+        </AssetGroup>
+    </AssetGroups>
+</AssetPackage>

@@ -1,0 +1,10 @@
+<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+
+<Project Version="2" Name="FlyingBrick" FolderName="Packages">
+    <OutputDirectory>.</OutputDirectory>
+    <TemporaryOutputDirectory>_PackageInt</TemporaryOutputDirectory>
+    <Packages>
+        <Package>PackageDefinitions\tangomikelima-aircraft-flying-brick.xml</Package>
+    </Packages>
+</Project>
+

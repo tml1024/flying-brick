@@ -1,0 +1,12 @@
+<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+
+<?xml version="1.0" encoding="utf-8" ?>
+<ModelInfo>
+	<LODS>
+		<!-- Highest LOD -->
+		<!-- Minimum display size in % (should be bounding sphere vertical screen size, sphere will often be slightly larger
+             than you expect) -->
+		<!-- Default minSize is 0 -->
+		<LOD minSize="10" ModelFile="FlyingBrick.gltf"/>
+	</LODS>
+</ModelInfo>
