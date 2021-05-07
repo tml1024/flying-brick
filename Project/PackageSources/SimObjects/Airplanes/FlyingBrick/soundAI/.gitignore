@@ -1,0 +1,3 @@
+# Don't put the .PCK files from the SimpleAircraft in git
+
+*.PCK
