@@ -44,10 +44,10 @@ enum Request : DWORD {
 };
 
 struct Controls {
-    double throttle;
     double rudder;
     double aileron;
     double elevator;
+    double leftBrake, rightBrake;
 };
 
 struct VelocityAndAttitude {
@@ -307,10 +307,11 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
         }
         case RequestAircraftState: {
             AircraftState *state = (AircraftState*)&data->dwData;
-            std::cout << " throttle:" << std::setw(3) << int(state->controls.throttle)
-                      << " rudder:" << std::setw(4) << int(100*state->controls.rudder)
+            std::cout << " rudder:" << std::setw(4) << int(100*state->controls.rudder)
                       << " aileron:" << std::setw(4) << int(100*state->controls.aileron)
                       << " elevator:" << std::setw(4) << int(100*state->controls.elevator)
+                      // Show the effective value when using left and right brakes as a combined axis
+                      << " brake:" << std::setw(4) << int(100*(state->controls.rightBrake - state->controls.leftBrake))
                       << " velocity:(" << std::setw(4) << int(state->velAndAtt.velX) << ","
                       << std::setw(4) << int(state->velAndAtt.velY) << ","
                       << std::setw(4) << int(state->velAndAtt.velZ) << ")"
@@ -497,13 +498,6 @@ extern "C" MSFS_CALLBACK void module_init(void) {
     }
 
     if (!SUCCEEDED(ATTEMPT(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAircraftState,
-                                                          "GENERAL ENG THROTTLE LEVER POSITION:1", "percent",
-                                                          SIMCONNECT_DATATYPE_FLOAT64)))) {
-        std::cerr << "==== FlyingBrick: SimConnect_AddToDataDefinition(throttle) failed" << std::endl;
-        return;
-    }
-
-    if (!SUCCEEDED(ATTEMPT(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAircraftState,
                                                           "RUDDER PEDAL POSITION", "position",
                                                           SIMCONNECT_DATATYPE_FLOAT64)))) {
         std::cerr << "==== FlyingBrick: SimConnect_AddToDataDefinition(rudder) failed" << std::endl;
@@ -521,6 +515,20 @@ extern "C" MSFS_CALLBACK void module_init(void) {
                                                           "ELEVATOR POSITION", "position",
                                                           SIMCONNECT_DATATYPE_FLOAT64)))) {
         std::cerr << "==== FlyingBrick: SimConnect_AddToDataDefinition(aileron) failed" << std::endl;
+        return;
+    }
+
+    if (!SUCCEEDED(ATTEMPT(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAircraftState,
+                                                          "BRAKE LEFT POSITION EX1", "position",
+                                                          SIMCONNECT_DATATYPE_FLOAT64)))) {
+        std::cerr << "==== FlyingBrick: SimConnect_AddToDataDefinition(left brake) failed" << std::endl;
+        return;
+    }
+
+    if (!SUCCEEDED(ATTEMPT(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAircraftState,
+                                                          "BRAKE RIGHT POSITION EX1", "position",
+                                                          SIMCONNECT_DATATYPE_FLOAT64)))) {
+        std::cerr << "==== FlyingBrick: SimConnect_AddToDataDefinition(right brake) failed" << std::endl;
         return;
     }
 
