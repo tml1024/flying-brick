@@ -10,3 +10,13 @@ The .cfg files in particular are intended to be extremely verbosely
 (and visually nicely) commented. Much improved upon the MSFS SDK
 samples. The Aircraft Editor in MSFS has not been allowed to re-write
 them.
+
+Patches are welcome (why else would this be on GitHub), but: Please
+stay with the same style for code and configuration files:
+
+- The C++ code should *not* use any Hungarian Notation.
+- No TAB characters anywhere.
+- Verbose and useful commit messages, written in the present tense.
+  (Sure, my own commit messages until now were not like that, but that
+  was during the very initial hacking when commits were basically just
+  arbitrary steps on the path up to making this public.)
