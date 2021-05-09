@@ -18,16 +18,15 @@ static HANDLE hSimConnect = 0;
 
 static bool quit = false;
 
-// Use different numeric ranges for the enums to recognize the values if they turn on in unexpected places
+// Use different numeric ranges for the enums to recognize the values if they show up in unexpected places
 
 enum DataDefinition : SIMCONNECT_DATA_DEFINITION_ID {
     DataDefinitionAircraftState = 1000,
-    DataDefinitionControlsAndAircraftState,
+    DataDefinitionAllState,
 };
 
 enum Event : DWORD {
-    EventSixHz = 2000,
-    EventFlightLoaded,
+    EventFlightLoaded = 2000,
     EventFrame,
     EventPause,
     EventSimStart,
@@ -35,16 +34,15 @@ enum Event : DWORD {
 };
 
 enum Request : DWORD {
-    RequestControlsAndAircraftState = 3000,
+    RequestAllState = 3000,
 };
 
-constexpr auto EPSILON = 0.01;
-
-struct Controls {
+struct ReadonlyState {
     double rudder;
     double aileron;
     double elevator;
     double leftBrake, rightBrake;
+    int64_t onGround;
 };
 
 struct AircraftState {
@@ -53,21 +51,21 @@ struct AircraftState {
     double velWorldX, velWorldY, velWorldZ;
     double heading;
     double bank, pitch;
-    double lat, lon, msl, agl, aglMinusCG;
-    double gs;
-    // Misc
-    int64_t onGround;
+    double lat, lon, msl;
     // Indications
     double kias, ktas;
     double alt;
     double vs;
 };
 
-struct ControlsAndAircraftState {
-    Controls controls;
+struct AllState {
+    ReadonlyState readonly;
     AircraftState state;
 };
 
+// As soon as an API call fails or we get an exception we are in an unknown state and it is not worth
+// to continue attempting to do anything.
+static bool failed = false;
 
 static bool simRunning = false;
 static bool simPaused = true;
@@ -82,21 +80,15 @@ static HRESULT record_call(int lineNumber,
                            HRESULT value) {
     if (!SUCCEEDED(value)) {
         std::cerr << "==== FlyingBrick: The call '" << call << "' failed at line " << lineNumber << std::endl;
+        failed = true;
         return value;
     }
+
     DWORD id;
-    static DWORD lastId = 0;
-
     SimConnect_GetLastSentPacketID(hSimConnect, &id);
-
-    if (lastId > 0)
-        assert(id > lastId);
-    lastId = id;
-
     calls[id] = call;
 
     static uint64_t counter = 0;
-
     if ((++counter % 100) == 0 && id > 100)
     {
         auto oldSize = calls.size();
@@ -113,29 +105,42 @@ static HRESULT record_call(int lineNumber,
 #define RECORD(expr) \
     record_call(__LINE__, #expr, expr);
 
-static double rad2deg(double rad) {
-    return rad / M_PI * 180;
-}
-
-static double deg2rad(double deg) {
+static constexpr double deg2rad(double deg) {
     return deg / 180 * M_PI;
 }
 
-static double fps2fpm(double fps) {
+static constexpr double rad2deg(double rad) {
+    return rad / M_PI * 180;
+}
+
+static constexpr double fps2fpm(double fps) {
     return fps * 60;
 }
 
-static double fpm2fps(double fpm) {
+static constexpr double fpm2fps(double fpm) {
     return fpm / 60;
 }
 
-static double fps2kn(double fps) {
+static constexpr double fps2kn(double fps) {
     return fps * 0.592484;
 }
 
-static double kn2fps(double kn) {
+static constexpr double kn2fps(double kn) {
     return kn * 1.68781042021544;
 }
+
+static constexpr double ft2m(double ft) {
+    return ft * (12 * 0.0254);
+}
+
+static constexpr double m2ft(double m) {
+    return m / (12 * 0.0254);
+}
+
+constexpr auto HALF = 0.5;
+constexpr auto HUNDREDTH = 0.01;
+
+constexpr auto EARTH_RADIUS_FT = m2ft(6371000);
 
 static std::string exception_type(int exception) {
     switch (exception) {
@@ -251,6 +256,9 @@ static std::string data_request_flags(int flags) {
 }
 
 static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
+    if (failed)
+        return;
+
     HRESULT hr;
 
     switch(pData->dwID) {
@@ -263,22 +271,13 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
         SIMCONNECT_RECV_EVENT *event = (SIMCONNECT_RECV_EVENT*)pData;
 
         switch(event->uEventID) {
-        case EventSixHz:
-            static uint64_t sixHzCounter = 0;
-            sixHzCounter++;
-            if ((sixHzCounter % 100) != 0)
-                break;
-            std::cout << "==== FlyingBrick: EVENT SixHz (" << sixHzCounter << ")" << std::endl;
-            break;
-
         case EventFlightLoaded:
             std::cout << "==== FlyingBrick: EVENT FlightLoaded" << std::endl;
             break;
 
         case EventFrame:
             static uint64_t frameCounter = 0;
-            frameCounter++;
-            if ((frameCounter % 1000) != 0)
+            if ((++frameCounter % 1000) != 0)
                 break;
             std::cout << "==== FlyingBrick: EVENT Frame (" << frameCounter << ")" << std::endl;
             break;
@@ -293,7 +292,7 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
         case EventSimStart:
             std::cout << "==== FlyingBrick: EVENT SimStart" << std::endl;
             RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
-                                                     RequestControlsAndAircraftState, DataDefinitionControlsAndAircraftState,
+                                                     RequestAllState, DataDefinitionAllState,
                                                      SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_SIM_FRAME,
                                                      SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0,
                                                      0));
@@ -304,7 +303,7 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
             std::cout << "==== FlyingBrick: EVENT SimStop" << std::endl;
             // Effectively unsubscribe to this data by (re-)requesting it with a very high interval
             RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
-                                                     RequestControlsAndAircraftState, DataDefinitionControlsAndAircraftState,
+                                                     RequestAllState, DataDefinitionAllState,
                                                      SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_SIM_FRAME,
                                                      SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0,
                                                      DWORD_MAX));
@@ -341,8 +340,7 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
     }
     case SIMCONNECT_RECV_ID_EVENT_FRAME: {
         static uint64_t frameCounter = 0;
-        frameCounter++;
-        if ((frameCounter % 1000) != 0)
+        if ((++frameCounter % 1000) != 0)
             break;
         SIMCONNECT_RECV_EVENT_FRAME *frame = (SIMCONNECT_RECV_EVENT_FRAME*)pData;
         std::cout << "==== FlyingBrick: EVENT_FRAME ("
@@ -355,18 +353,17 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
         SIMCONNECT_RECV_SIMOBJECT_DATA *data = (SIMCONNECT_RECV_SIMOBJECT_DATA*)pData;
         switch (data->dwRequestID) {
-        case RequestControlsAndAircraftState: {
-            ControlsAndAircraftState *state = (ControlsAndAircraftState*)&data->dwData;
+        case RequestAllState: {
+            AllState *state = (AllState*)&data->dwData;
             
             static uint64_t counter = 0;
-            counter++;
-            if ((counter % 10) == 0)
-                std::cout << "==== FlyingBrick: SIMOBJECT_DATA RequestControlsAndAircraftState "
-                          << " rudder:" << std::fixed << std::setw(5) << std::setprecision(2) << state->controls.rudder
-                          << " aileron:" << std::fixed << std::setw(5) << std::setprecision(2) << state->controls.aileron
-                          << " elevator:" << std::fixed << std::setw(5) << std::setprecision(2) << state->controls.elevator
-                          << " brakes:(" << std::fixed << std::setw(4) << std::setprecision(0) << int(100*state->controls.leftBrake) << ","
-                          <<                std::fixed << std::setw(4) << std::setprecision(0) << int(100*state->controls.rightBrake) << ")"
+            if ((++counter % 10) == 0)
+                std::cout << "==== FlyingBrick: SIMOBJECT_DATA RequestAllState "
+                          << " rudder:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.rudder
+                          << " aileron:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.aileron
+                          << " elevator:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.elevator
+                          << " brakes:(" << std::fixed << std::setw(4) << std::setprecision(0) << int(100*state->readonly.leftBrake) << ","
+                          <<                std::fixed << std::setw(4) << std::setprecision(0) << int(100*state->readonly.rightBrake) << ")"
                           << " velBody:(" << std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyX) << ","
                           <<                 std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyY) << ","
                           <<                 std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyZ) << ")"
@@ -375,7 +372,9 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
                           <<               std::setw(4) << std::setprecision(2) << int(state->state.velWorldZ) << ")"
                           << " heading:" << std::setw(3) << int(rad2deg(state->state.heading))
                           << " bank:" << std::setw(4) << int(rad2deg(state->state.bank))
-                          << " pitch:"  << std::setw(4) << int(rad2deg(state->state.pitch))
+                          << " pitch:" << std::setw(4) << int(rad2deg(state->state.pitch))
+                          << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lat)) << (state->state.lat > 0 ? "N" : "S")
+                          << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lon)) << (state->state.lon > 0 ? "E" : "W")
                           << std::endl;
 
             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
@@ -388,34 +387,54 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
                     desiredState.velBodyX = desiredState.velBodyY = desiredState.velBodyZ = 0;
                     desiredState.velWorldX = desiredState.velWorldY = desiredState.velWorldZ = 0;
                     desiredState.heading = desiredState.bank = desiredState.pitch = 0;
-                    desiredState.gs = desiredState.kias = desiredState.ktas = 0;
+                    desiredState.kias = desiredState.ktas = 0;
                     desiredState.vs = 0;
 
                     gotFirstState = true;
                 } else {
-                    auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime);
+                    auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
 
                     // Obviously we can turn and move only in the air
-                    if (!state->state.onGround) {
+                    if (!state->readonly.onGround) {
                         // Arbitrary choice in this toy: Full rudder pedal deflection means 45 degrees per
                         // second yaw rate.
-                        if (std::fabs(state->controls.rudder) > EPSILON) {
-                            auto diff = state->controls.rudder * timeSinceLast.count() / 1000 * deg2rad(45);
+                        if (std::fabs(state->readonly.rudder) > HUNDREDTH) {
+                            auto diff = state->readonly.rudder * timeSinceLast / 1000 * deg2rad(45);
                             std::cout << "==== FlyingBrick: heading difference: " << diff << " rad" << std::endl;
                             desiredState.heading += diff;
                         }
 
-                        // Another arbitrary choice: Full elevator deflection means 50 knots GS. Ditto for full aileron deflection.
-                        if (std::abs(state->controls.elevator) > EPSILON || std::abs(state->controls.aileron) > EPSILON) {
-                            desiredState.velBodyZ = state->controls.elevator * timeSinceLast.count() / 1000 * kn2fps(50);
-                            desiredState.velBodyX = state->controls.aileron * timeSinceLast.count() / 1000 * kn2fps(50);
+                        // Another arbitrary choice: Full elevator control deflection means 50 knots GS
+                        // forward or 10 knots backward. Full aileron control deflection means 10 knots left or right.
+                        if (std::abs(state->readonly.elevator) > HUNDREDTH || std::abs(state->readonly.aileron) > HUNDREDTH) {
+
+                            // Stick pushed forward: negative elevator input, set speed forward.
+                            // Stick pulled back: positive elevator input, set speed backward.
+                            if (state->readonly.elevator < -HUNDREDTH)
+                                desiredState.velBodyZ = -state->readonly.elevator * kn2fps(50);
+                            else if (state->readonly.elevator > HUNDREDTH)
+                                desiredState.velBodyZ = -state->readonly.elevator * kn2fps(10);
+                            else
+                                desiredState.velBodyZ = 0;
+
+                            // Stick tilted sideways: aileron input, set speed sideways
+                            if (std::abs(state->readonly.elevator) > HUNDREDTH)
+                                desiredState.velBodyX = state->readonly.aileron * kn2fps(10);
+                            else
+                                desiredState.velBodyX = 0;
 
                             const double bodyRelativeAbsoluteVelocity = std::sqrt(desiredState.velBodyZ * desiredState.velBodyZ
                                                                                   + desiredState.velBodyX * desiredState.velBodyX);
                             const double bodyRelativeTrack = M_PI/2 - std::atan2(desiredState.velBodyZ, desiredState.velBodyX);
                             const double worldRelativeTrack = desiredState.heading + bodyRelativeTrack;
+
                             desiredState.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
                             desiredState.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+
+                            // Also modify the geographical position. This is just a toy, use spherical Earth approximation and ignore the poles and
+                            // the 180E longitude.
+                            desiredState.lat += desiredState.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
+                            desiredState.lon += desiredState.velWorldX * timeSinceLast / 1000 * std::cos(desiredState.lat) / EARTH_RADIUS_FT;
 
                             std::cout << "==== FlyingBrick: velBody(Z,X):(" << desiredState.velBodyZ << "," << desiredState.velBodyX << ")"
                                       << " bodyRelativeAbsoluteVelocity:" << bodyRelativeAbsoluteVelocity
@@ -425,19 +444,21 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
 
                             desiredState.kias = fps2kn(bodyRelativeAbsoluteVelocity);
                             // Assume this aircraft is used only at low altitudes and ignore wind
-                            desiredState.ktas = desiredState.gs = desiredState.kias;
+                            desiredState.ktas = desiredState.kias;
                         }
                     }
 
                     // Vertical velocity however can be changed while on the ground. We can lift off. Full
                     // right or left brake means plus or minus 500 fpm.
-                    if ((!state->state.onGround && std::abs(state->controls.rightBrake - state->controls.leftBrake) > EPSILON)
-                        || (state->state.onGround && state->controls.rightBrake - state->controls.leftBrake > EPSILON)) {
-                        desiredState.velBodyY = (state->controls.rightBrake - state->controls.leftBrake) * timeSinceLast.count() / 1000 * fpm2fps(500);
+                    if ((!state->readonly.onGround && std::abs(state->readonly.rightBrake - state->readonly.leftBrake) > HUNDREDTH)
+                        || (state->readonly.onGround && state->readonly.rightBrake - state->readonly.leftBrake > HUNDREDTH)) {
+                        desiredState.velBodyY = (state->readonly.rightBrake - state->readonly.leftBrake) * fpm2fps(500);
                         desiredState.velWorldY = desiredState.velBodyY;
                         desiredState.vs = fps2fpm(desiredState.velBodyY);
-                    }
 
+                        // And modify the altitude
+                        desiredState.alt += desiredState.velWorldY * timeSinceLast / 1000;
+                    }
                     lastTime = now;
                 }
                 RECORD(SimConnect_SetDataOnSimObject(hSimConnect, DataDefinitionAircraftState,
@@ -474,6 +495,7 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
                   << (calls.count(exception->dwSendID) ? calls[exception->dwSendID] : "at unknown line") << " "
                   << exception->dwIndex
                   << std::endl;
+        failed = true;
         break;
     }
     case SIMCONNECT_RECV_ID_WEATHER_OBSERVATION: {
@@ -587,95 +609,109 @@ extern "C" MSFS_CALLBACK void module_init(void) {
     // Most likely it is pointless to check the return values from these SimConnect calls. It seems that
     // errors in parameters are reported asynchronously anyway as SIMCONNECT_RECV_ID_EXCEPTION.
 
-    RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventSixHz, "6Hz"));
-    
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventFlightLoaded, "FlightLoaded"));
 
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventPause, "Pause"));
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventSimStart, "SimStart"));
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventSimStop, "SimStop"));
 
-    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionControlsAndAircraftState,
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "RUDDER PEDAL POSITION", "position",
-                                          SIMCONNECT_DATATYPE_FLOAT64));
-    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionControlsAndAircraftState,
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "AILERON POSITION", "position",
-                                          SIMCONNECT_DATATYPE_FLOAT64));
-    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionControlsAndAircraftState,
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "ELEVATOR POSITION", "position",
-                                          SIMCONNECT_DATATYPE_FLOAT64));
-    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionControlsAndAircraftState,
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "BRAKE LEFT POSITION EX1", "position",
-                                          SIMCONNECT_DATATYPE_FLOAT64));
-    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionControlsAndAircraftState,
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "BRAKE RIGHT POSITION EX1", "position",
-                                          SIMCONNECT_DATATYPE_FLOAT64));
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "SIM ON GROUND", "boolean",
+                                          SIMCONNECT_DATATYPE_INT64));
 
-    for (auto definition: {DataDefinitionAircraftState, DataDefinitionControlsAndAircraftState}) {
+
+    for (auto definition: {DataDefinitionAllState, DataDefinitionAircraftState}) {
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VELOCITY BODY X", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VELOCITY BODY Y", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VELOCITY BODY Z", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
+
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VELOCITY WORLD X", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VELOCITY WORLD Y", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VELOCITY WORLD Z", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
+
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE HEADING DEGREES TRUE", "radians",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HUNDREDTH));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE BANK DEGREES", "radians",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HUNDREDTH));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE PITCH DEGREES", "radians",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HUNDREDTH));
+
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE LATITUDE", "radians",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HUNDREDTH));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE LONGITUDE", "radians",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HUNDREDTH));
+
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE ALTITUDE", "feet",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "PLANE ALT ABOVE GROUND", "feet",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "PLANE ALT ABOVE GROUND MINUS CG", "feet",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "GROUND VELOCITY", "knots",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HUNDREDTH));
 
         // Use only 64-bit types so that the sizes of the structs (without any packing pragmas) match what
         // SimConnect wants.
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "SIM ON GROUND", "boolean",
-                                              SIMCONNECT_DATATYPE_INT64));
-
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "AIRSPEED INDICATED", "knots",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "AIRSPEED TRUE", "knots",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "INDICATED ALTITUDE", "feet",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VERTICAL SPEED", "feet/minute",
-                                              SIMCONNECT_DATATYPE_FLOAT64));
+                                              SIMCONNECT_DATATYPE_FLOAT64,
+                                              HALF));
     }
     RECORD(SimConnect_CallDispatch(hSimConnect, FlyingBrickDispatchProc, NULL));
 }
@@ -689,4 +725,3 @@ extern "C" MSFS_CALLBACK void module_deinit(void) {
         return;
     }
 }
-
