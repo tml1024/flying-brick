@@ -38,7 +38,7 @@ struct ReadonlyState {
     double rudder;
     double aileron;
     double elevator;
-    double leftBrake, rightBrake;
+    double throttle, mixture;
     int64_t onGround;
 };
 
@@ -358,8 +358,8 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                           << " rudder:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.rudder
                           << " aileron:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.aileron
                           << " elevator:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.elevator
-                          << " brakes:(" << std::fixed << std::setw(4) << std::setprecision(0) << int(100*state->readonly.leftBrake) << ","
-                          <<                std::fixed << std::setw(4) << std::setprecision(0) << int(100*state->readonly.rightBrake) << ")"
+                          << " throttle:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.throttle
+                          << " mixture:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.mixture
                           << " velBody:(" << std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyX) << ","
                           <<                 std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyY) << ","
                           <<                 std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyZ) << ")"
@@ -445,10 +445,10 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                     }
 
                     // Vertical velocity however can be changed while on the ground. We can lift off. Full
-                    // right or left brake means plus or minus 500 fpm.
-                    if ((!state->readonly.onGround && std::abs(state->readonly.rightBrake - state->readonly.leftBrake) > HUNDREDTH)
-                        || (state->readonly.onGround && state->readonly.rightBrake - state->readonly.leftBrake > HUNDREDTH)) {
-                        desiredState.velBodyY = (state->readonly.rightBrake - state->readonly.leftBrake) * fpm2fps(500);
+                    // throttle (and zero mixture) means 500 fpm up, full mixture (and zero throttle) means 500 fpm down
+                    if ((!state->readonly.onGround && std::abs(state->readonly.throttle - state->readonly.mixture) > HUNDREDTH)
+                        || (state->readonly.onGround && state->readonly.throttle - state->readonly.mixture > HUNDREDTH)) {
+                        desiredState.velBodyY = (state->readonly.throttle - state->readonly.mixture) * fpm2fps(500);
                         desiredState.velWorldY = desiredState.velBodyY;
                         desiredState.vs = fps2fpm(desiredState.velBodyY);
 
@@ -624,13 +624,14 @@ static void init() {
                                           SIMCONNECT_DATATYPE_FLOAT64,
                                           HUNDREDTH));
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
-                                          "BRAKE LEFT POSITION EX1", "position",
+                                          "GENERAL ENG THROTTLE LEVER POSITION:1", "position",
                                           SIMCONNECT_DATATYPE_FLOAT64,
                                           HUNDREDTH));
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
-                                          "BRAKE RIGHT POSITION EX1", "position",
+                                          "GENERAL ENG MIXTURE LEVER POSITION:1", "position",
                                           SIMCONNECT_DATATYPE_FLOAT64,
                                           HUNDREDTH));
+
     // Use only 64-bit types so that the sizes of the structs (without any packing pragmas) match what
     // SimConnect wants.
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,

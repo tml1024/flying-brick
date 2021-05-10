@@ -1,7 +1,7 @@
 ; -*- Mode: conf-windows; comment-column: 50; fill-column: 130; tab-width: 4; indent-tabs-mode: nil -*-
 
 [SimVarForSpawningInTheAir.0]
-IAS = 80
+IAS = 0
 FlapsDegree = 0
 
 [Avionics.0]
@@ -130,3 +130,4 @@ RudderTrimDisabled = False
 
 [Fuel.0]
 TankSelector = All
+

@@ -1,7 +1,7 @@
 ; -*- Mode: conf-windows; comment-column: 50; fill-column: 130; tab-width: 4; indent-tabs-mode: nil -*-
 
 [SimVarForSpawningInTheAir.0]
-IAS = 40
+IAS = 0
 FlapsDegree = 0
 
 [Avionics.0]
@@ -127,3 +127,4 @@ AileronTrimPct = 0
 AileronTrimDisabled = False
 ElevatorTrimDisabled = False
 RudderTrimDisabled = False
+
