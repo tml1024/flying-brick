@@ -17,8 +17,6 @@
 
 static HANDLE hSimConnect = 0;
 
-static bool quit = false;
-
 // Use different numeric ranges for the enums to recognize the values if they show up in unexpected places
 
 enum DataDefinition : SIMCONNECT_DATA_DEFINITION_ID {
@@ -91,8 +89,6 @@ static HRESULT record_call(int lineNumber,
         auto newestToRemove = calls.upper_bound(id - 100);
         if (newestToRemove != calls.end())
             calls.erase(calls.begin(), newestToRemove);
-
-        std::cout << "==== FlyingBrick: Pruned call history: " << oldSize << " => " << calls.size() << std::endl;
     }
 
     return value;
@@ -301,17 +297,11 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
     HRESULT hr;
 
     switch(pData->dwID) {
-    case SIMCONNECT_RECV_ID_OPEN: {
-        SIMCONNECT_RECV_OPEN *open = (SIMCONNECT_RECV_OPEN*) pData;
-        std::cout << "==== FlyingBrick: OPEN" << std::endl;
-        break;
-    }
     case SIMCONNECT_RECV_ID_EVENT: {
         SIMCONNECT_RECV_EVENT *event = (SIMCONNECT_RECV_EVENT*)pData;
 
         switch(event->uEventID) {
         case EventPause:
-            std::cout << "==== FlyingBrick: EVENT Pause " << (event->dwData ? "ON" : "OFF") << std::endl;
             simPaused = event->dwData;
             if (simPaused)
                 gotFirstState = false;
@@ -320,30 +310,6 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
             std::cout << "==== FlyingBrick: EVENT " << event->uEventID << " " << event->dwData << std::endl;
             break;
         }
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_FILENAME: {
-        SIMCONNECT_RECV_EVENT_FILENAME *filename = (SIMCONNECT_RECV_EVENT_FILENAME*)pData;
-        std::cout << "==== FlyingBrick: EVENT_FILENAME "
-                  << filename->szFileName << " " << filename->uEventID << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_OBJECT_ADDREMOVE: {
-        SIMCONNECT_RECV_EVENT_OBJECT_ADDREMOVE *object = (SIMCONNECT_RECV_EVENT_OBJECT_ADDREMOVE*)pData;
-        std::cout << "==== FlyingBrick: EVENT_OBJECT_ADDREMOVE "
-                  << object->uEventID << " " << simobject_type(object->eObjType) << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_FRAME: {
-        static uint64_t frameCounter = 0;
-        if ((++frameCounter % 1000) != 0)
-            break;
-        SIMCONNECT_RECV_EVENT_FRAME *frame = (SIMCONNECT_RECV_EVENT_FRAME*)pData;
-        std::cout << "==== FlyingBrick: EVENT_FRAME ("
-                  << frameCounter << ") "
-                  << frame->uEventID << " "
-                  << frame->fFrameRate << " "
-                  << frame->fSimSpeed << std::endl;
         break;
     }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
@@ -369,7 +335,7 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                           << " heading:" << std::setw(3) << int(rad2deg(state->state.heading))
                           << " bank:" << std::setw(4) << int(rad2deg(state->state.bank))
                           << " pitch:" << std::setw(4) << int(rad2deg(state->state.pitch))
-                          << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lat)) << (state->state.lat > 0 ? "N" : "S")
+                          << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lat)) << (state->state.lat > 0 ? "N" : "S")
                           << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lon)) << (state->state.lon > 0 ? "E" : "W")
                           << std::endl;
 
@@ -396,7 +362,6 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                         // second yaw rate.
                         if (std::fabs(state->readonly.rudder) > HUNDREDTH) {
                             auto diff = state->readonly.rudder * timeSinceLast / 1000 * deg2rad(45);
-                            std::cout << "==== FlyingBrick: heading difference: " << diff << " rad" << std::endl;
                             desiredState.heading += diff;
                         }
 
@@ -432,12 +397,6 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                             desiredState.lat += desiredState.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
                             desiredState.lon += desiredState.velWorldX * timeSinceLast / 1000 * std::cos(desiredState.lat) / EARTH_RADIUS_FT;
 
-                            std::cout << "==== FlyingBrick: velBody(Z,X):(" << desiredState.velBodyZ << "," << desiredState.velBodyX << ")"
-                                      << " bodyRelativeAbsoluteVelocity:" << bodyRelativeAbsoluteVelocity
-                                      << " bodyRelativeTrack:" << bodyRelativeTrack
-                                      << " worldRelativeTrack:" << worldRelativeTrack
-                                      << " velWorld(Z,X):(" << desiredState.velWorldZ << "," << desiredState.velWorldX << ")" << std::endl;
-
                             desiredState.kias = fps2kn(bodyRelativeAbsoluteVelocity);
                             // Assume this aircraft is used only at low altitudes and ignore wind
                             desiredState.ktas = desiredState.kias;
@@ -468,126 +427,16 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
         }
         break;
     }
-    case SIMCONNECT_RECV_ID_SIMOBJECT_DATA_BYTYPE: {
-        SIMCONNECT_RECV_SIMOBJECT_DATA_BYTYPE *data = (SIMCONNECT_RECV_SIMOBJECT_DATA_BYTYPE*)pData;
-        std::cout << "==== FlyingBrick: SIMOBJECT_DATA_BYTYPE "
-                  << data->dwRequestID << " "
-                  << data->dwObjectID << " "
-                  << data->dwDefineID << " "
-                  << data_request_flags(data->dwFlags) << " "
-                  << data->dwoutof << " " << data->dwDefineCount
-                  << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_QUIT: {
-        std::cout << "==== FlyingBrick: QUIT" << std::endl;
-        quit = true;
-        break;
-    }
     case SIMCONNECT_RECV_ID_EXCEPTION: {
         SIMCONNECT_RECV_EXCEPTION *exception = (SIMCONNECT_RECV_EXCEPTION*)pData;
-        std::cout << "==== FlyingBrick: EXCEPTION "
+        std::cerr << "==== FlyingBrick: EXCEPTION "
                   << exception_type(exception->dwException) << " "
-                  << (calls.count(exception->dwSendID) ? calls[exception->dwSendID] : "at unknown line") << " "
+                  << (calls.count(exception->dwSendID) ? ("from " + calls[exception->dwSendID]) : "from unknown API call") << " "
                   << exception->dwIndex
                   << std::endl;
         failed = true;
         break;
     }
-    case SIMCONNECT_RECV_ID_WEATHER_OBSERVATION: {
-        SIMCONNECT_RECV_WEATHER_OBSERVATION *observation = (SIMCONNECT_RECV_WEATHER_OBSERVATION*)pData;
-        std::cout << "==== FlyingBrick: WEATHER_OBSERVATION "
-                  << observation->dwRequestID << " "
-                  << observation->szMetar
-                  << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_CLOUD_STATE: {
-        SIMCONNECT_RECV_CLOUD_STATE *cloud_state = (SIMCONNECT_RECV_CLOUD_STATE*)pData;
-        std::cout << "==== FlyingBrick: CLOUD_STATE" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_ASSIGNED_OBJECT_ID: {
-        SIMCONNECT_RECV_ASSIGNED_OBJECT_ID *object_id = (SIMCONNECT_RECV_ASSIGNED_OBJECT_ID*)pData;
-        std::cout << "==== FlyingBrick: ASSIGNED_OBJECT_ID "
-                  << object_id->dwRequestID << " "
-                  << object_id->dwObjectID
-                  << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_RESERVED_KEY: {
-        SIMCONNECT_RECV_RESERVED_KEY *key = (SIMCONNECT_RECV_RESERVED_KEY*)pData;
-        std::cout << "==== FlyingBrick: RESERVED_KEY" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_CUSTOM_ACTION: {
-        SIMCONNECT_RECV_CUSTOM_ACTION *action = (SIMCONNECT_RECV_CUSTOM_ACTION*)pData;
-        std::cout << "==== FlyingBrick: CUSTOM_ACTION" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_SYSTEM_STATE: {
-        SIMCONNECT_RECV_SYSTEM_STATE *state = (SIMCONNECT_RECV_SYSTEM_STATE*)pData;
-        std::cout << "==== FlyingBrick: SYSTEM_STATE" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_CLIENT_DATA: {
-        SIMCONNECT_RECV_CLIENT_DATA *data = (SIMCONNECT_RECV_CLIENT_DATA*)pData;
-        std::cout << "==== FlyingBrick: CLIENT_DATA" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_WEATHER_MODE: {
-        SIMCONNECT_RECV_EVENT_WEATHER_MODE *mode = (SIMCONNECT_RECV_EVENT_WEATHER_MODE*)pData;
-        std::cout << "==== FlyingBrick: EVENT_WEATHER_MODE" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_AIRPORT_LIST: {
-        SIMCONNECT_RECV_AIRPORT_LIST *airport_list = (SIMCONNECT_RECV_AIRPORT_LIST*)pData;
-        std::cout << "==== FlyingBrick: AIRPORT_LIST" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_VOR_LIST: {
-        SIMCONNECT_RECV_VOR_LIST *vor_list = (SIMCONNECT_RECV_VOR_LIST*)pData;
-        std::cout << "==== FlyingBrick: VOR_LIST" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_NDB_LIST: {
-        SIMCONNECT_RECV_NDB_LIST *ndb_list = (SIMCONNECT_RECV_NDB_LIST*)pData;
-        std::cout << "==== FlyingBrick: NDB_LIST" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_WAYPOINT_LIST: {
-        SIMCONNECT_RECV_WAYPOINT_LIST *waypoint_list = (SIMCONNECT_RECV_WAYPOINT_LIST*)pData;
-        std::cout << "==== FlyingBrick: WAYPOINT_LIST" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_MULTIPLAYER_SERVER_STARTED: {
-        SIMCONNECT_RECV_EVENT_MULTIPLAYER_SERVER_STARTED *server_started = (SIMCONNECT_RECV_EVENT_MULTIPLAYER_SERVER_STARTED*)pData;
-        std::cout << "==== FlyingBrick: EVENT_MULTIPLAYER_SERVER_STARTED" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_MULTIPLAYER_CLIENT_STARTED: {
-        SIMCONNECT_RECV_EVENT_MULTIPLAYER_CLIENT_STARTED *client_started = (SIMCONNECT_RECV_EVENT_MULTIPLAYER_CLIENT_STARTED*)pData;
-        std::cout << "==== FlyingBrick: EVENT_MULTIPLAYER_CLIENT_STARTED" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_MULTIPLAYER_SESSION_ENDED: {
-        SIMCONNECT_RECV_EVENT_MULTIPLAYER_SESSION_ENDED *session_ended = (SIMCONNECT_RECV_EVENT_MULTIPLAYER_SESSION_ENDED*)pData;
-        std::cout << "==== FlyingBrick: EVENT_MULTIPLAYER_SESSION_ENDED" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_RACE_END: {
-        SIMCONNECT_RECV_EVENT_RACE_END *race_end = (SIMCONNECT_RECV_EVENT_RACE_END*)pData;
-        std::cout << "==== FlyingBrick: EVENT_RACE_END" << std::endl;
-        break;
-    }
-    case SIMCONNECT_RECV_ID_EVENT_RACE_LAP: {
-        SIMCONNECT_RECV_EVENT_RACE_LAP *race_lap = (SIMCONNECT_RECV_EVENT_RACE_LAP*)pData;
-        std::cout << "==== FlyingBrick: EVENT_RACE_LAP" << std::endl;
-        break;
-    }
-    default:
-        std::cerr << "==== FlyingBrick: Got unknown SIMCONNECT_RECV " << pData->dwID << std::endl;
-        break;
     }
 }
 
@@ -722,12 +571,6 @@ static void init() {
     RECORD(SimConnect_CallDispatch(hSimConnect, FlyingBrickDispatchProc, NULL));
 }
 
-extern "C" MSFS_CALLBACK void module_init() {
-    // It seems that module_init() is called not only for standalone modules, but also for panel modules.
-    std::cout << "==== FlyingBrick: module_init" << std::endl;
-    init();
-}
-
 static void deinit() {
     if (hSimConnect == 0)
         return;
@@ -745,11 +588,6 @@ static void deinit() {
     }
 
     hSimConnect = 0;
-}
-
-extern "C" MSFS_CALLBACK void module_deinit() {
-    // And for panel modules, module_deinit() actually *is* called, unlike for standalone modules.
-    std::cout << "==== FlyingBrick: module_deinit" << std::endl;
 }
 
 extern "C" MSFS_CALLBACK bool FlightModel_gauge_callback(FsContext ctx, int service_id, void* pData) {
