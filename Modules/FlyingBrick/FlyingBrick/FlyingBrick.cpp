@@ -42,8 +42,6 @@ struct ReadonlyState {
 
 struct AircraftState {
     // Actual values
-    double velBodyX, velBodyY, velBodyZ;
-    double velWorldX, velWorldY, velWorldZ;
     double heading;
     double bank, pitch;
     double lat, lon, msl;
@@ -129,7 +127,6 @@ static constexpr double m2ft(double m) {
     return m / (12 * 0.0254);
 }
 
-constexpr auto HALF = 0.5;
 constexpr auto HUNDREDTH = 0.01;
 
 constexpr auto EARTH_RADIUS_FT = m2ft(6371000);
@@ -319,23 +316,17 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
             AllState *state = (AllState*)&data->dwData;
             
             static uint64_t counter = 0;
-            if ((++counter % 10) == 0)
+            if ((++counter % 50) == 0)
                 std::cout << "==== FlyingBrick: SIMOBJECT_DATA RequestAllState "
                           << " rudder:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.rudder
                           << " aileron:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.aileron
                           << " elevator:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.elevator
                           << " throttle:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.throttle
                           << " mixture:" << std::fixed << std::setw(5) << std::setprecision(2) << state->readonly.mixture
-                          << " velBody:(" << std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyX) << ","
-                          <<                 std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyY) << ","
-                          <<                 std::fixed << std::setw(4) << std::setprecision(2) << int(state->state.velBodyZ) << ")"
-                          << " velWorld:(" << std::setw(4) << std::setprecision(2) << int(state->state.velWorldX) << ","
-                          <<               std::setw(4) << std::setprecision(2) << int(state->state.velWorldY) << ","
-                          <<               std::setw(4) << std::setprecision(2) << int(state->state.velWorldZ) << ")"
                           << " heading:" << std::setw(3) << int(rad2deg(state->state.heading))
                           << " bank:" << std::setw(4) << int(rad2deg(state->state.bank))
                           << " pitch:" << std::setw(4) << int(rad2deg(state->state.pitch))
-                          << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lat)) << (state->state.lat > 0 ? "N" : "S")
+                          << " loc: " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lat)) << (state->state.lat > 0 ? "N" : "S")
                           << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lon)) << (state->state.lon > 0 ? "E" : "W")
                           << std::endl;
 
@@ -346,8 +337,6 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                 if (!gotFirstState) {
                     // Set the desired initial state: motionless
                     desiredState = state->state;
-                    desiredState.velBodyX = desiredState.velBodyY = desiredState.velBodyZ = 0;
-                    desiredState.velWorldX = desiredState.velWorldY = desiredState.velWorldZ = 0;
                     desiredState.heading = desiredState.bank = desiredState.pitch = 0;
                     desiredState.kias = desiredState.ktas = 0;
                     desiredState.vs = 0;
@@ -355,6 +344,8 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                     gotFirstState = true;
                 } else {
                     auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
+
+                    AircraftState newState = desiredState;
 
                     // Obviously we can turn and move only in the air
                     if (!state->readonly.onGround) {
@@ -369,33 +360,33 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                         // forward or 10 knots backward. Full aileron control deflection means 10 knots left or right.
                         if (std::abs(state->readonly.elevator) > HUNDREDTH || std::abs(state->readonly.aileron) > HUNDREDTH) {
 
+                            double velBodyZ, velBodyX;
                             // Stick pushed forward: negative elevator input, set speed forward.
                             // Stick pulled back: positive elevator input, set speed backward.
                             if (state->readonly.elevator < -HUNDREDTH)
-                                desiredState.velBodyZ = -state->readonly.elevator * kn2fps(50);
+                                velBodyZ = -state->readonly.elevator * kn2fps(50);
                             else if (state->readonly.elevator > HUNDREDTH)
-                                desiredState.velBodyZ = -state->readonly.elevator * kn2fps(10);
+                                velBodyZ = -state->readonly.elevator * kn2fps(10);
                             else
-                                desiredState.velBodyZ = 0;
+                                velBodyZ = 0;
 
                             // Stick tilted sideways: aileron input, set speed sideways
                             if (std::abs(state->readonly.elevator) > HUNDREDTH)
-                                desiredState.velBodyX = state->readonly.aileron * kn2fps(10);
+                                velBodyX = state->readonly.aileron * kn2fps(10);
                             else
-                                desiredState.velBodyX = 0;
+                                velBodyX = 0;
 
-                            const double bodyRelativeAbsoluteVelocity = std::sqrt(desiredState.velBodyZ * desiredState.velBodyZ
-                                                                                  + desiredState.velBodyX * desiredState.velBodyX);
-                            const double bodyRelativeTrack = M_PI/2 - std::atan2(desiredState.velBodyZ, desiredState.velBodyX);
-                            const double worldRelativeTrack = desiredState.heading + bodyRelativeTrack;
+                            const double bodyRelativeAbsoluteVelocity = std::sqrt(velBodyZ * velBodyZ + velBodyX * velBodyX);
+                            const double bodyRelativeTrack = M_PI/2 - std::atan2(velBodyZ, velBodyX);
+                            const double worldRelativeTrack = newState.heading + bodyRelativeTrack;
 
-                            desiredState.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
-                            desiredState.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+                            const double velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+                            const double velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
 
-                            // Also modify the geographical position. This is just a toy, use spherical Earth approximation and ignore the poles and
-                            // the 180E longitude.
-                            desiredState.lat += desiredState.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
-                            desiredState.lon += desiredState.velWorldX * timeSinceLast / 1000 * std::cos(desiredState.lat) / EARTH_RADIUS_FT;
+                            // This is just a toy, so use a spherical Earth approximation and ignore the poles
+                            // and the antimeridian.
+                            desiredState.lat += velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
+                            desiredState.lon += velWorldX * timeSinceLast / 1000 * std::cos(desiredState.lat) / EARTH_RADIUS_FT;
 
                             desiredState.kias = fps2kn(bodyRelativeAbsoluteVelocity);
                             // Assume this aircraft is used only at low altitudes and ignore wind
@@ -407,12 +398,10 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                     // throttle (and zero mixture) means 500 fpm up, full mixture (and zero throttle) means 500 fpm down
                     if ((!state->readonly.onGround && std::abs(state->readonly.throttle - state->readonly.mixture) > HUNDREDTH)
                         || (state->readonly.onGround && state->readonly.throttle - state->readonly.mixture > HUNDREDTH)) {
-                        desiredState.velBodyY = (state->readonly.throttle - state->readonly.mixture) * fpm2fps(500);
-                        desiredState.velWorldY = desiredState.velBodyY;
-                        desiredState.vs = fps2fpm(desiredState.velBodyY);
+                        const double velWorldY = (state->readonly.throttle - state->readonly.mixture) * fpm2fps(500);
 
-                        // And modify the altitude
-                        desiredState.alt += desiredState.velWorldY * timeSinceLast / 1000;
+                        desiredState.alt += velWorldY * timeSinceLast / 1000;
+                        desiredState.vs = fps2fpm(velWorldY);
                     }
                     lastTime = now;
                 }
@@ -490,74 +479,48 @@ static void init() {
 
     for (auto definition: {DataDefinitionAllState, DataDefinitionAircraftState}) {
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "VELOCITY BODY X", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "VELOCITY BODY Y", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "VELOCITY BODY Z", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
-
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "VELOCITY WORLD X", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "VELOCITY WORLD Y", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "VELOCITY WORLD Z", "feet/second",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
-
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE HEADING DEGREES TRUE", "radians",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HUNDREDTH));
+                                              0));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE BANK DEGREES", "radians",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HUNDREDTH));
+                                              10));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE PITCH DEGREES", "radians",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HUNDREDTH));
+                                              10));
 
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE LATITUDE", "radians",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HUNDREDTH));
+                                              0));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE LONGITUDE", "radians",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HUNDREDTH));
+                                              0));
 
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "PLANE ALTITUDE", "feet",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HUNDREDTH));
+                                              0));
 
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "AIRSPEED INDICATED", "knots",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
+                                              10));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "AIRSPEED TRUE", "knots",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
+                                              10));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "INDICATED ALTITUDE", "feet",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
+                                              10));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "VERTICAL SPEED", "feet/minute",
                                               SIMCONNECT_DATATYPE_FLOAT64,
-                                              HALF));
+                                              10));
     }
 
     RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
