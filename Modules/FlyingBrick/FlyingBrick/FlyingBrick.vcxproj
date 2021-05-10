@@ -47,12 +47,12 @@
     <GenerateManifest />
     <LinkIncremental />
     <IncludePath>$(MSFS_IncludePath)</IncludePath>
-    <OutDir>$(SolutionDir)..\..\Project\Packages\tangomikelima-aircraft-flying-brick\Modules\</OutDir>
+    <OutDir>$(SolutionDir)..\..\Project\PackageSources\SimObjects\Airplanes\FlyingBrick\panel\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|MSFS'">
     <TargetExt>.wasm</TargetExt>
     <IncludePath>$(MSFS_IncludePath)</IncludePath>
-    <OutDir>$(SolutionDir)..\..\Project\Packages\tangomikelima-aircraft-flying-brick\Modules\</OutDir>
+    <OutDir>$(SolutionDir)..\..\Project\PackageSources\SimObjects\Airplanes\FlyingBrick\panel\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|MSFS'">
     <ClCompile>
@@ -102,10 +102,7 @@
       </ProfileGuidedDatabase>
       <AdditionalLibraryDirectories>$(OutDir)</AdditionalLibraryDirectories>
     </Link>
-    <PostBuildEvent>
-      <Command>@echo on
-MSFSLayoutGenerator $(OutDirFullPath)..\layout.json</Command>
-    </PostBuildEvent>
+    <PostBuildEvent />
     <CustomBuildStep>
       <Command>
       </Command>
@@ -149,10 +146,7 @@ MSFSLayoutGenerator $(OutDirFullPath)..\layout.json</Command>
       </ProfileGuidedDatabase>
       <AdditionalLibraryDirectories>$(OutDir)</AdditionalLibraryDirectories>
     </Link>
-    <PostBuildEvent>
-      <Command>@echo on
-MSFSLayoutGenerator $(OutDirFullPath)..\layout.json</Command>
-    </PostBuildEvent>
+    <PostBuildEvent />
     <CustomBuildStep>
       <Command>
       </Command>

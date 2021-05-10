@@ -1,4 +1,4 @@
-﻿// -*- comment-column: 50; fill-column: 110; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil -*-
+// -*- comment-column: 50; fill-column: 110; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil -*-
 
 #include <cassert>
 #include <chrono>
@@ -9,6 +9,7 @@
 #include <string>
 
 #include "MSFS/MSFS.h"
+#include "MSFS/MSFS_Render.h"
 #include "MSFS/MSFS_WindowsTypes.h"
 #include "SimConnect.h"
 
@@ -26,11 +27,7 @@ enum DataDefinition : SIMCONNECT_DATA_DEFINITION_ID {
 };
 
 enum Event : DWORD {
-    EventFlightLoaded = 2000,
-    EventFrame,
-    EventPause,
-    EventSimStart,
-    EventSimStop,
+    EventPause = 2000,
 };
 
 enum Request : DWORD {
@@ -67,7 +64,6 @@ struct AllState {
 // to continue attempting to do anything.
 static bool failed = false;
 
-static bool simRunning = false;
 static bool simPaused = true;
 static bool gotFirstState = false;
 
@@ -255,7 +251,50 @@ static std::string data_request_flags(int flags) {
     return result;
 }
 
-static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
+static std::string panel_service(int type) {
+    switch (type) {
+    case PANEL_SERVICE_PRE_QUERY:
+        return "PRE_QUERY";
+    case PANEL_SERVICE_POST_QUERY:
+        return "POST_QUERY";
+    case PANEL_SERVICE_PRE_INSTALL:
+        return "PRE_INSTALL";
+    case PANEL_SERVICE_POST_INSTALL:
+        return "POST_INSTALL";
+    case PANEL_SERVICE_PRE_INITIALIZE:
+        return "PRE_INITIALIZE";
+    case PANEL_SERVICE_POST_INITIALIZE:
+        return "POST_INITIALIZE";
+    case PANEL_SERVICE_PRE_UPDATE:
+        return "PRE_UPDATE";
+    case PANEL_SERVICE_POST_UPDATE:
+        return "POST_UPDATE";
+    case PANEL_SERVICE_PRE_GENERATE:
+        return "PRE_GENERATE";
+    case PANEL_SERVICE_POST_GENERATE:
+        return "POST_GENERATE";
+    case PANEL_SERVICE_PRE_DRAW:
+        return "PRE_DRAW";
+    case PANEL_SERVICE_POST_DRAW:
+        return "POST_DRAW";
+    case PANEL_SERVICE_PRE_KILL:
+        return "PRE_KILL";
+    case PANEL_SERVICE_POST_KILL:
+        return "POST_KILL";
+    case PANEL_SERVICE_CONNECT_TO_WINDOW:
+        return "CONNECT_TO_WINDOW";
+    case PANEL_SERVICE_DISCONNECT:
+        return "DISCONNECT";
+    case PANEL_SERVICE_PANEL_OPEN:
+        return "PANEL_OPEN";
+    case PANEL_SERVICE_PANEL_CLOSE:
+        return "PANEL_CLOSE";
+    default:
+        return "? (" + std::to_string(type) + ")";
+    }
+}
+
+static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     if (failed)
         return;
 
@@ -271,46 +310,12 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
         SIMCONNECT_RECV_EVENT *event = (SIMCONNECT_RECV_EVENT*)pData;
 
         switch(event->uEventID) {
-        case EventFlightLoaded:
-            std::cout << "==== FlyingBrick: EVENT FlightLoaded" << std::endl;
-            break;
-
-        case EventFrame:
-            static uint64_t frameCounter = 0;
-            if ((++frameCounter % 1000) != 0)
-                break;
-            std::cout << "==== FlyingBrick: EVENT Frame (" << frameCounter << ")" << std::endl;
-            break;
-
         case EventPause:
             std::cout << "==== FlyingBrick: EVENT Pause " << (event->dwData ? "ON" : "OFF") << std::endl;
             simPaused = event->dwData;
             if (simPaused)
                 gotFirstState = false;
             break;
-
-        case EventSimStart:
-            std::cout << "==== FlyingBrick: EVENT SimStart" << std::endl;
-            RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
-                                                     RequestAllState, DataDefinitionAllState,
-                                                     SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_SIM_FRAME,
-                                                     SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0,
-                                                     0));
-            simRunning = true;
-            break;
-
-        case EventSimStop:
-            std::cout << "==== FlyingBrick: EVENT SimStop" << std::endl;
-            // Effectively unsubscribe to this data by (re-)requesting it with a very high interval
-            RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
-                                                     RequestAllState, DataDefinitionAllState,
-                                                     SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_SIM_FRAME,
-                                                     SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0,
-                                                     DWORD_MAX));
-            simRunning = false;
-            gotFirstState = false;
-            break;
-
         default:
             std::cout << "==== FlyingBrick: EVENT " << event->uEventID << " " << event->dwData << std::endl;
             break;
@@ -320,16 +325,7 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
     case SIMCONNECT_RECV_ID_EVENT_FILENAME: {
         SIMCONNECT_RECV_EVENT_FILENAME *filename = (SIMCONNECT_RECV_EVENT_FILENAME*)pData;
         std::cout << "==== FlyingBrick: EVENT_FILENAME "
-                  << filename->szFileName;
-        switch (filename->uEventID) {
-        case EventFlightLoaded:
-            std::cout << " FlightLoaded";
-            break;
-        default:
-            std::cout << " " << filename->uEventID;
-            break;
-        }
-        std::cout << std::endl;
+                  << filename->szFileName << " " << filename->uEventID << std::endl;
         break;
     }
     case SIMCONNECT_RECV_ID_EVENT_OBJECT_ADDREMOVE: {
@@ -380,7 +376,7 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
             static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
             
-            if (simRunning && !simPaused) {
+            if (!simPaused) {
                 if (!gotFirstState) {
                     // Set the desired initial state: motionless
                     desiredState = state->state;
@@ -595,25 +591,25 @@ static void MSFS_CALLBACK FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD 
     }
 }
 
-extern "C" MSFS_CALLBACK void module_init(void) {
+static void init() {
     HRESULT hr;
 
-    if (hSimConnect == 0) {
-        if (!SUCCEEDED(SimConnect_Open(&hSimConnect, "FlyingBrick", nullptr, 0, 0, 0))) {
-            std::cerr << "==== FlyingBrick: SimConnect_Open failed" << std::endl;
-            return;
-        }
-        std::cout << "==== FlyingBrick: Connected" << std::endl;
+    if (hSimConnect != 0)
+        return;
+
+    if (!SUCCEEDED(SimConnect_Open(&hSimConnect, "FlyingBrick", nullptr, 0, 0, 0))) {
+        std::cerr << "==== FlyingBrick: SimConnect_Open failed" << std::endl;
+        return;
     }
+    std::cout << "==== FlyingBrick: Connected" << std::endl;
+
+    // Let's re-set this to false after each SimConnect_Open()
+    failed = false;
 
     // Most likely it is pointless to check the return values from these SimConnect calls. It seems that
     // errors in parameters are reported asynchronously anyway as SIMCONNECT_RECV_ID_EXCEPTION.
 
-    RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventFlightLoaded, "FlightLoaded"));
-
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventPause, "Pause"));
-    RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventSimStart, "SimStart"));
-    RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventSimStop, "SimStop"));
 
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "RUDDER PEDAL POSITION", "position",
@@ -635,6 +631,8 @@ extern "C" MSFS_CALLBACK void module_init(void) {
                                           "BRAKE RIGHT POSITION EX1", "position",
                                           SIMCONNECT_DATATYPE_FLOAT64,
                                           HUNDREDTH));
+    // Use only 64-bit types so that the sizes of the structs (without any packing pragmas) match what
+    // SimConnect wants.
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "SIM ON GROUND", "boolean",
                                           SIMCONNECT_DATATYPE_INT64));
@@ -694,8 +692,6 @@ extern "C" MSFS_CALLBACK void module_init(void) {
                                               SIMCONNECT_DATATYPE_FLOAT64,
                                               HUNDREDTH));
 
-        // Use only 64-bit types so that the sizes of the structs (without any packing pragmas) match what
-        // SimConnect wants.
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "AIRSPEED INDICATED", "knots",
                                               SIMCONNECT_DATATYPE_FLOAT64,
@@ -713,15 +709,60 @@ extern "C" MSFS_CALLBACK void module_init(void) {
                                               SIMCONNECT_DATATYPE_FLOAT64,
                                               HALF));
     }
+
+    RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
+                                             RequestAllState, DataDefinitionAllState,
+                                             SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_SIM_FRAME,
+                                             SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0,
+                                             0));
+
+    gotFirstState = false;
+
     RECORD(SimConnect_CallDispatch(hSimConnect, FlyingBrickDispatchProc, NULL));
 }
 
-extern "C" MSFS_CALLBACK void module_deinit(void) {
-    if (!hSimConnect)
+extern "C" MSFS_CALLBACK void module_init() {
+    // It seems that module_init() is called not only for standalone modules, but also for panel modules.
+    std::cout << "==== FlyingBrick: module_init" << std::endl;
+    init();
+}
+
+static void deinit() {
+    if (hSimConnect == 0)
         return;
+
+    // Effectively unsubscribe to this data by (re-)requesting it with a very high interval
+    RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
+                                             RequestAllState, DataDefinitionAllState,
+                                             SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_SIM_FRAME,
+                                             SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0,
+                                             DWORD_MAX));
 
     if (!SUCCEEDED(SimConnect_Close(hSimConnect))) {
         std::cerr << "==== FlyingBrick: SimConnect_Close failed" << std::endl;
         return;
     }
+
+    hSimConnect = 0;
+}
+
+extern "C" MSFS_CALLBACK void module_deinit() {
+    // And for panel modules, module_deinit() actually *is* called, unlike for standalone modules.
+    std::cout << "==== FlyingBrick: module_deinit" << std::endl;
+}
+
+extern "C" MSFS_CALLBACK bool FlightModel_gauge_callback(FsContext ctx, int service_id, void* pData) {
+    switch (service_id) {
+    case PANEL_SERVICE_PRE_INSTALL:
+        std::cout << "==== FlyingBrick: " << panel_service(service_id) << std::endl;
+        init();
+        break;
+
+    case PANEL_SERVICE_PRE_KILL:
+        std::cout << "==== FlyingBrick: " << panel_service(service_id) << std::endl;
+        deinit();
+        break;
+    }
+
+    return true;
 }
