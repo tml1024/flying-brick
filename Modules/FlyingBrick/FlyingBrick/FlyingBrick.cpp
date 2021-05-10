@@ -8,10 +8,13 @@
 #include <map>
 #include <string>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wignored-attributes"
 #include "MSFS/MSFS.h"
 #include "MSFS/MSFS_Render.h"
 #include "MSFS/MSFS_WindowsTypes.h"
 #include "SimConnect.h"
+#pragma GCC diagnostic pop
 
 #include "FlyingBrick.h"
 
@@ -84,7 +87,6 @@ static HRESULT record_call(int lineNumber,
     static uint64_t counter = 0;
     if ((++counter % 100) == 0 && id > 100)
     {
-        auto oldSize = calls.size();
         auto newestToRemove = calls.upper_bound(id - 100);
         if (newestToRemove != calls.end())
             calls.erase(calls.begin(), newestToRemove);
@@ -95,6 +97,10 @@ static HRESULT record_call(int lineNumber,
 
 #define RECORD(expr) \
     record_call(__LINE__, #expr, expr);
+
+// Helper functions, don't warn if not used
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 
 static constexpr double deg2rad(double deg) {
     return deg / 180 * M_PI;
@@ -127,10 +133,6 @@ static constexpr double ft2m(double ft) {
 static constexpr double m2ft(double m) {
     return m / (12 * 0.0254);
 }
-
-constexpr auto HUNDREDTH = 0.01;
-
-constexpr auto EARTH_RADIUS_FT = m2ft(6371000);
 
 static std::string exception_type(int exception) {
     switch (exception) {
@@ -288,6 +290,12 @@ static std::string panel_service(int type) {
     }
 }
 
+#pragma GCC diagnostic pop
+
+constexpr auto HUNDREDTH = 0.01;
+
+constexpr auto EARTH_RADIUS_FT = m2ft(6371000);
+
 static bool AboveGround(AllState *state) {
     // Sadly we can't ask the contact point locations through SimConnect, so we just have to know. Or, we
     // could open (read-only) and parase the flight_model.cfg file.
@@ -297,8 +305,6 @@ static bool AboveGround(AllState *state) {
 static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     if (failed)
         return;
-
-    HRESULT hr;
 
     switch(pData->dwID) {
     case SIMCONNECT_RECV_ID_EVENT: {
@@ -439,8 +445,6 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
 }
 
 static void init() {
-    HRESULT hr;
-
     if (hSimConnect != 0)
         return;
 
