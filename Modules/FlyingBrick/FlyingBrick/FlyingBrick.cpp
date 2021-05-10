@@ -37,6 +37,7 @@ struct ReadonlyState {
     double aileron;
     double elevator;
     double throttle, mixture;
+    double agl;
     int64_t onGround;
 };
 
@@ -287,6 +288,12 @@ static std::string panel_service(int type) {
     }
 }
 
+static bool AboveGround(AllState *state) {
+    // Sadly we can't ask the contact point locations through SimConnect, so we just have to know. Or, we
+    // could open (read-only) and parase the flight_model.cfg file.
+    return (!state->readonly.onGround && state->readonly.agl > 7.7);
+}
+
 static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     if (failed)
         return;
@@ -328,6 +335,8 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                           << " pitch:" << std::setw(4) << int(rad2deg(state->state.pitch))
                           << " loc: " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lat)) << (state->state.lat > 0 ? "N" : "S")
                           << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state->state.lon)) << (state->state.lon > 0 ? "E" : "W")
+                          << " alt msl:" << std::fixed << std::setw(6) << std::setprecision(1) << state->state.msl
+                          << " agl:" << std::fixed << std::setw(6) << std::setprecision(1) << state->readonly.agl
                           << std::endl;
 
             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
@@ -348,7 +357,7 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                     AircraftState newState = desiredState;
 
                     // Obviously we can turn and move only in the air
-                    if (!state->readonly.onGround) {
+                    if (AboveGround(state)) {
                         // Arbitrary choice in this toy: Full rudder pedal deflection means 45 degrees per
                         // second yaw rate.
                         if (std::fabs(state->readonly.rudder) > HUNDREDTH) {
@@ -396,8 +405,8 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
 
                     // Vertical velocity however can be changed while on the ground. We can lift off. Full
                     // throttle (and zero mixture) means 500 fpm up, full mixture (and zero throttle) means 500 fpm down
-                    if ((!state->readonly.onGround && std::abs(state->readonly.throttle - state->readonly.mixture) > HUNDREDTH)
-                        || (state->readonly.onGround && state->readonly.throttle - state->readonly.mixture > HUNDREDTH)) {
+                    if ((AboveGround(state) && std::abs(state->readonly.throttle - state->readonly.mixture) > HUNDREDTH)
+                        || (!AboveGround(state) && state->readonly.throttle - state->readonly.mixture > HUNDREDTH)) {
                         const double velWorldY = (state->readonly.throttle - state->readonly.mixture) * fpm2fps(500);
 
                         desiredState.alt += velWorldY * timeSinceLast / 1000;
@@ -467,6 +476,11 @@ static void init() {
                                           HUNDREDTH));
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "GENERAL ENG MIXTURE LEVER POSITION:1", "position",
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "PLANE ALT ABOVE GROUND", "feet",
                                           SIMCONNECT_DATATYPE_FLOAT64,
                                           HUNDREDTH));
 
