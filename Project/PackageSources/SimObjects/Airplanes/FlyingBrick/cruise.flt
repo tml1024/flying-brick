@@ -23,27 +23,30 @@ AudioAdfListen = False
 AvionicsSwitch = True
 
 [Engine Parameters.1.0]
-ThrottleLeverPct = 0.9
-PropellerLeverPct = 1
-Pct Engine RPM = 1
-MaxReachedEngineRPM = 2500
-LeftMagneto = True
-RightMagneto = True
-GeneratorSwitch = True
-FuelValveOpen = True
+ThrottleLeverPct = 0.001
+PropellerLeverPct = 0
+MixtureLeverPct = 0.001
+Pct Engine RPM = 0
+MaxReachedEngineRPM = 1000
+LeftMagneto = False
+RightMagneto = False
+GeneratorSwitch = False
+FuelValveOpen = False
 CowlFlapPct = 0
 FuelPumpSwitch = False
 FuelPumpSwitch_EX1 = 0
+FuelValveOpen = False
 CarbHeat/DeiceSwitch = False
-EngineMasterSwitch = True
-GlowPlugTemperaturePct = 1
+EngineMasterSwitch = False
+GlowPlugTemperaturePct = 0
+IgnitionSwitch = 0
 
 [Propeller.1.0]
 prop_beta = 0.3
-prop_max_rpm_percent = 0.9
+prop_max_rpm_percent = 0.001
 
 [Systems.0]
-BatterySwitch = True
+BatterySwitch = False
 StructuralDeiceSwitch = False
 PropDeiceSwitch = False
 Autobrakes = 0
@@ -127,7 +130,3 @@ AileronTrimPct = 0
 AileronTrimDisabled = False
 ElevatorTrimDisabled = False
 RudderTrimDisabled = False
-
-[Fuel.0]
-TankSelector = All
-

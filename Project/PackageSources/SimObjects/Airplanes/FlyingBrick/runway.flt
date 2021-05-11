@@ -1,5 +1,14 @@
 ; -*- Mode: conf-windows; comment-column: 50; fill-column: 130; tab-width: 4; indent-tabs-mode: nil -*-
 
+[SimVars.0]
+PVelBodyAxis = 0
+BVelBodyAxis = 0
+HVelBodyAxis = 0
+XVelBodyAxis = 0
+YVelBodyAxis = 0
+ZVelBodyAxis = 0
+SimOnGround = True
+
 [Avionics.0]
 Comm1Active = 127.850
 Comm1Standby = 124.850
@@ -19,27 +28,30 @@ AudioAdfListen = False
 AvionicsSwitch = True
 
 [Engine Parameters.1.0]
-ThrottleLeverPct = 0.5
-PropellerLeverPct = 0.8
-Pct Engine RPM = 0.8
-MaxReachedEngineRPM = 2500
-LeftMagneto = True
-RightMagneto = True
-GeneratorSwitch = True
-FuelValveOpen = True
+ThrottleLeverPct = 0.001
+PropellerLeverPct = 0
+MixtureLeverPct = 0.001
+Pct Engine RPM = 0
+MaxReachedEngineRPM = 1000
+LeftMagneto = False
+RightMagneto = False
+GeneratorSwitch = False
+FuelValveOpen = False
 CowlFlapPct = 0
-FuelPumpSwitch = True
+FuelPumpSwitch = False
 FuelPumpSwitch_EX1 = 0
+FuelValveOpen = False
 CarbHeat/DeiceSwitch = False
-EngineMasterSwitch = True
-GlowPlugTemperaturePct = 1
+EngineMasterSwitch = False
+GlowPlugTemperaturePct = 0
+IgnitionSwitch = 0
 
 [Propeller.1.0]
 prop_beta = 0.3
-prop_max_rpm_percent = 0.8
+prop_max_rpm_percent = 0.001
 
 [Systems.0]
-BatterySwitch = True
+BatterySwitch = False
 StructuralDeiceSwitch = False
 PropDeiceSwitch = False
 Autobrakes = 0
@@ -64,7 +76,7 @@ BleedAirSource = 0
 [Switches.0]
 PitotHeat = False
 BeaconLights = True
-LandingLights = True
+LandingLights = False
 LogoLights = False
 NavLights = True
 PanelLights = True
@@ -72,12 +84,12 @@ RecognitionLights = True
 StrobeLights = False
 TaxiLights = False
 WingLights = False
-CabinLights = True
+CabinLights = False
 GlareshieldLights = False
 PedestalLights = False
 
 [AutoPilot.0]
-MasterSwitch = True
+MasterSwitch = False
 WingLeveler = False
 Nav1Lock = False
 HeadingLock = False

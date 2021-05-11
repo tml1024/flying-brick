@@ -21,8 +21,9 @@ AvionicsSwitch = True
 [Engine Parameters.1.0]
 ThrottleLeverPct = 0
 PropellerLeverPct = 0
+MixtureLeverPct = 0
 Pct Engine RPM = 0
-MaxReachedEngineRPM = 2500
+MaxReachedEngineRPM = 1000
 LeftMagneto = False
 RightMagneto = False
 GeneratorSwitch = False
@@ -33,12 +34,12 @@ FuelPumpSwitch_EX1 = 0
 FuelValveOpen = False
 CarbHeat/DeiceSwitch = False
 EngineMasterSwitch = False
-GlowPlugTemperaturePct = 1
+GlowPlugTemperaturePct = 0
 IgnitionSwitch = 0
 
 [Propeller.1.0]
 prop_beta = 0.3
-prop_max_rpm_percent = 0.8
+prop_max_rpm_percent = 0
 
 [Systems.0]
 BatterySwitch = False
