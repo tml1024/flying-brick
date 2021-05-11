@@ -27,12 +27,19 @@ enum DataDefinition : SIMCONNECT_DATA_DEFINITION_ID {
     DataDefinitionAllState,
 };
 
-enum Event : DWORD {
+enum Event : SIMCONNECT_CLIENT_EVENT_ID {
     EventPause = 2000,
+    EventFreezeAlt,
+    EventFreezeAtt,
+    EventFreezeLatLon,
 };
 
 enum Request : DWORD {
     RequestAllState = 3000,
+};
+
+enum Group : SIMCONNECT_NOTIFICATION_GROUP_ID {
+    GroupFreeze = 4000,
 };
 
 struct ReadonlyState {
@@ -41,6 +48,7 @@ struct ReadonlyState {
     double elevator;
     double throttle, mixture;
     double agl;
+    double velWindX, velWindY, velWindZ;
     int64_t onGround;
 };
 
@@ -371,6 +379,10 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
             
             if (!simPaused) {
                 if (!gotFirstState) {
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAlt, 0, GroupFreeze, 0));
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAtt, 0, GroupFreeze, 0));
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeLatLon, 0, GroupFreeze, 0));
+
                     // Set the desired initial state: motionless
                     desiredState = state->state;
 
@@ -509,6 +521,15 @@ static void init() {
 
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventPause, "Pause"));
 
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAlt, "FREEZE_ALTITUDE_TOGGLE"));
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAtt, "FREEZE_ATTITUDE_TOGGLE"));
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeLatLon, "FREEZE_LATITUDE_LONGITUDE_TOGGLE"));
+
+    RECORD(SimConnect_AddClientEventToNotificationGroup(hSimConnect, GroupFreeze, EventFreezeAlt, false));
+    RECORD(SimConnect_AddClientEventToNotificationGroup(hSimConnect, GroupFreeze, EventFreezeAtt, false));
+    RECORD(SimConnect_AddClientEventToNotificationGroup(hSimConnect, GroupFreeze, EventFreezeLatLon, false));
+    RECORD(SimConnect_SetNotificationGroupPriority(hSimConnect, GroupFreeze, SIMCONNECT_GROUP_PRIORITY_HIGHEST));
+
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "RUDDER PEDAL POSITION", "position",
                                           SIMCONNECT_DATATYPE_FLOAT64,
@@ -534,6 +555,20 @@ static void init() {
                                           "PLANE ALT ABOVE GROUND", "feet",
                                           SIMCONNECT_DATATYPE_FLOAT64,
                                           HUNDREDTH));
+
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "RELATIVE WIND VELOCITY BODY X", "feet/second",
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "RELATIVE WIND VELOCITY BODY Y", "feet/second",
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "RELATIVE WIND VELOCITY BODY Z", "feet/second",
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          HUNDREDTH));
+
 
     // Use only 64-bit types so that the sizes of the structs (without any packing pragmas) match what
     // SimConnect wants.
