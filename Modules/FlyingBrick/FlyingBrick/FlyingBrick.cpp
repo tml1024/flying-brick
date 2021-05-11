@@ -414,9 +414,9 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                         // Stick pushed forward: negative elevator input, set speed forward.
                         // Stick pulled back: positive elevator input, set speed backward.
                         if (state->readonly.elevator > HUNDREDTH)
-                            desiredState.velBodyZ = -state->readonly.elevator * kn2fps(100);
-                        else if (state->readonly.elevator < -HUNDREDTH)
                             desiredState.velBodyZ = -state->readonly.elevator * kn2fps(50);
+                        else if (state->readonly.elevator < -HUNDREDTH)
+                            desiredState.velBodyZ = -state->readonly.elevator * kn2fps(100);
                         else
                             desiredState.velBodyZ = 0;
 
