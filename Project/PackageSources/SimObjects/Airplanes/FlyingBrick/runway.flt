@@ -44,7 +44,7 @@ FuelValveOpen = False
 CarbHeat/DeiceSwitch = False
 EngineMasterSwitch = False
 GlowPlugTemperaturePct = 0
-IgnitionSwitch = 0
+IgnitionSwitch = 1
 
 [Propeller.1.0]
 prop_beta = 0.3

@@ -29,9 +29,9 @@ enum DataDefinition : SIMCONNECT_DATA_DEFINITION_ID {
 
 enum Event : SIMCONNECT_CLIENT_EVENT_ID {
     EventPause = 2000,
-    EventFreezeAlt,
-    EventFreezeAtt,
-    EventFreezeLatLon,
+    EventFreezeAltSet,
+    EventFreezeAttSet,
+    EventFreezePosSet,
 };
 
 enum Request : DWORD {
@@ -39,7 +39,6 @@ enum Request : DWORD {
 };
 
 enum Group : SIMCONNECT_NOTIFICATION_GROUP_ID {
-    GroupFreeze = 4000,
 };
 
 struct ReadonlyState {
@@ -50,6 +49,8 @@ struct ReadonlyState {
     double agl;
     double velWindX, velWindY, velWindZ;
     int64_t onGround;
+    int64_t ignitionSwitch;
+    int64_t altFreeze, attFreeze, posFreeze;
 };
 
 struct MutableState {
@@ -314,7 +315,7 @@ static void dumpMutableState(const MutableState &state) {
     std::cout << " heading:" << std::setw(3) << int(rad2deg(state.heading))
               << " bank:" << std::setw(4) << int(rad2deg(state.bank))
               << " pitch:" << std::setw(4) << int(rad2deg(state.pitch))
-              << " loc: " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state.lat)) << (state.lat > 0 ? "N" : "S")
+              << " pos: " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state.lat)) << (state.lat > 0 ? "N" : "S")
               << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state.lon)) << (state.lon > 0 ? "E" : "W")
               << " msl:" << std::fixed << std::setw(6) << std::setprecision(1) << state.msl
               << " / body:" << std::fixed << std::setw(5) << std::setprecision(2) << state.velBodyX
@@ -336,10 +337,27 @@ constexpr auto HUNDREDTH = 0.01;
 
 constexpr auto EARTH_RADIUS_FT = m2ft(6371000);
 
+static void setDesiredState(const MutableState &state) {
+    // Set the desired initial state: motionless
+    desiredState = state;
+
+    // Keep lat, lon, msl as is
+
+    desiredState.bank = desiredState.pitch = 0;
+    desiredState.velBodyX = desiredState.velBodyY = desiredState.velBodyZ = 0;
+    desiredState.velWorldX = desiredState.velWorldY = desiredState.velWorldZ = 0;
+
+    desiredState.kias = desiredState.ktas = 0;
+
+    // Keep alt as is
+
+    desiredState.vs = 0;
+}
+
 static bool AboveGround(const ReadonlyState &state) {
     // Sadly we can't ask the contact point locations through SimConnect, so we just have to know. Or, we
     // could open (read-only) and parse the flight_model.cfg file.
-    return (!state.onGround && state.agl > 7.7);
+    return (!state.onGround && state.agl > 7.5);
 }
 
 static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
@@ -377,24 +395,16 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
             static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
             
-            if (!simPaused) {
+            if (!simPaused && state->readonly.ignitionSwitch) {
+                if (!state->readonly.altFreeze)
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAltSet, TRUE, SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+                if (!state->readonly.attFreeze)
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAttSet, TRUE, SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+                if (!state->readonly.posFreeze)
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezePosSet, TRUE, SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+
                 if (!gotFirstState) {
-                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAlt, 0, GroupFreeze, 0));
-                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAtt, 0, GroupFreeze, 0));
-                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeLatLon, 0, GroupFreeze, 0));
-
-                    // Set the desired initial state: motionless
-                    desiredState = state->state;
-
-                    // Keep lat, lon, msl as is
-                    desiredState.bank = desiredState.pitch = 0;
-                    desiredState.velBodyX = desiredState.velBodyY = desiredState.velBodyZ = 0;
-                    desiredState.velWorldX = desiredState.velWorldY = desiredState.velWorldZ = 0;
-
-                    desiredState.kias = desiredState.ktas = 0;
-                    // Keep alt as is
-                    desiredState.vs = 0;
-
+                    setDesiredState(state->state);
                     gotFirstState = true;
                 } else if (state->readonly.agl < -1) {
                     // If we are below ground, something is badly wrong. Jump 200 ft above ground.
@@ -482,6 +492,15 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
                                                      SIMCONNECT_OBJECT_ID_USER, 0,
                                                      0, sizeof(MutableState), &desiredState));
                 lastTime = now;
+            } if (!simPaused && !state->readonly.ignitionSwitch) {
+                if (state->readonly.altFreeze)
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAltSet, FALSE, SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+                if (!state->readonly.attFreeze)
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAttSet, FALSE, SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+                if (!state->readonly.posFreeze)
+                    RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezePosSet, FALSE, SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+
+                gotFirstState = false;
             }
             break;
         }
@@ -521,14 +540,9 @@ static void init() {
 
     RECORD(SimConnect_SubscribeToSystemEvent(hSimConnect, EventPause, "Pause"));
 
-    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAlt, "FREEZE_ALTITUDE_TOGGLE"));
-    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAtt, "FREEZE_ATTITUDE_TOGGLE"));
-    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeLatLon, "FREEZE_LATITUDE_LONGITUDE_TOGGLE"));
-
-    RECORD(SimConnect_AddClientEventToNotificationGroup(hSimConnect, GroupFreeze, EventFreezeAlt, false));
-    RECORD(SimConnect_AddClientEventToNotificationGroup(hSimConnect, GroupFreeze, EventFreezeAtt, false));
-    RECORD(SimConnect_AddClientEventToNotificationGroup(hSimConnect, GroupFreeze, EventFreezeLatLon, false));
-    RECORD(SimConnect_SetNotificationGroupPriority(hSimConnect, GroupFreeze, SIMCONNECT_GROUP_PRIORITY_HIGHEST));
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAltSet, "FREEZE_ALTITUDE_SET"));
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAttSet, "FREEZE_ATTITUDE_SET"));
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezePosSet, "FREEZE_LATITUDE_LONGITUDE_SET"));
 
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "RUDDER PEDAL POSITION", "position",
@@ -574,6 +588,18 @@ static void init() {
     // SimConnect wants.
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "SIM ON GROUND", "boolean",
+                                          SIMCONNECT_DATATYPE_INT64));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "MASTER IGNITION SWITCH", "boolean",
+                                          SIMCONNECT_DATATYPE_INT64));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "IS ALTITUDE FREEZE ON", "boolean",
+                                          SIMCONNECT_DATATYPE_INT64));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "IS ATTITUDE FREEZE ON", "boolean",
+                                          SIMCONNECT_DATATYPE_INT64));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "IS LATITUDE LONGITUDE FREEZE ON", "boolean",
                                           SIMCONNECT_DATATYPE_INT64));
 
 
