@@ -486,7 +486,7 @@ static void FlyingBrickDispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *
             break;
         }
         default:
-            std::cerr << " ? (" << data->dwRequestID << ")";
+            std::cerr << " ? (" << data->dwRequestID << ")" << std::flush;
         }
         break;
     }
