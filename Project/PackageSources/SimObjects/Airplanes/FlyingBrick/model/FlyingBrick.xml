@@ -2,11 +2,18 @@
 
 <?xml version="1.0" encoding="utf-8" ?>
 <ModelInfo>
-	<LODS>
-		<!-- Highest LOD -->
-		<!-- Minimum display size in % (should be bounding sphere vertical screen size, sphere will often be slightly larger
+    <LODS>
+        <!-- Highest LOD -->
+        <!-- Minimum display size in % (should be bounding sphere vertical screen size, sphere will often be slightly larger
              than you expect) -->
-		<!-- Default minSize is 0 -->
-		<LOD minSize="10" ModelFile="FlyingBrick.gltf"/>
-	</LODS>
+        <!-- Default minSize is 0 -->
+        <LOD minSize="10" ModelFile="FlyingBrick.gltf"/>
+    </LODS>
+    <Behaviors>
+        <Include ModelBehaviorFile="Asobo\Exterior.xml"/>
+        <Component ID="GEARS">
+            <UseTemplate Name="ASOBO_GEAR_Center_Template">
+            </UseTemplate>
+        </Component>
+    </Behaviors>
 </ModelInfo>
