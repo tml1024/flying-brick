@@ -12,7 +12,21 @@
     <Behaviors>
         <Include ModelBehaviorFile="Asobo\Exterior.xml"/>
         <Component ID="GEARS">
-            <UseTemplate Name="ASOBO_GEAR_Center_Template">
+            <UseTemplate Name="ASOBO_GEAR_Base_Template">
+			    <ANIM_NAME>Front_left_leg</ANIM_NAME>
+			    <ID>0</ID>
+            </UseTemplate>
+            <UseTemplate Name="ASOBO_GEAR_Base_Template">
+			    <ANIM_NAME>Front_right_leg</ANIM_NAME>
+			    <ID>1</ID>
+            </UseTemplate>
+            <UseTemplate Name="ASOBO_GEAR_Base_Template">
+			    <ANIM_NAME>Rear_left_leg</ANIM_NAME>
+			    <ID>2</ID>
+            </UseTemplate>
+            <UseTemplate Name="ASOBO_GEAR_Base_Template">
+			    <ANIM_NAME>Rear_right_leg</ANIM_NAME>
+			    <ID>3</ID>
             </UseTemplate>
         </Component>
     </Behaviors>
