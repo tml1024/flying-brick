@@ -1,4 +1,9 @@
 #!/bin/sh
 
-cp FlyingBrick.blend /Volumes/stinky/Users/tml/OneDrive/flying-brick
-cp -R Project/PackageSources /Volumes/stinky/Users/tml/OneDrive/flying-brick/Project
+tar -c -f - \
+    --exclude '*~' \
+    --exclude '*.orig' \
+    --exclude '.gitignore' \
+    FlyingBrick.blend \
+    Project/PackageSources |
+    (cd /Volumes/stinky/Users/tml/OneDrive/flying-brick && tar xvf -)
