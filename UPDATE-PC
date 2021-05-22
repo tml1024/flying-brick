@@ -1,0 +1,4 @@
+#!/bin/sh
+
+cp FlyingBrick.blend /Volumes/stinky/Users/tml/OneDrive/flying-brick
+cp -R Project/PackageSources /Volumes/stinky/Users/tml/OneDrive/flying-brick/Project
