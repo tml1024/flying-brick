@@ -84,6 +84,7 @@ static bool failed = false;
 
 static bool simPaused = true;
 static bool gotFirstState = false;
+static bool ignitionSwitch = false;
 
 static MutableState desiredState;
 
@@ -450,6 +451,8 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
         break;
     }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
+
+        // If paused, do nothing
         if (simPaused)
             break;
 
@@ -461,6 +464,20 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
             // Check if we are in a "zombie" state when the sim is in the main menu, at "Null Island" (0N 0E).
             // In that case, do nothing.
             if (std::abs(state->state.lat) < 0.0001 && std::abs(state->state.lon) < 0.0001)
+                break;
+
+            // If ignition switch off, do nothing. When turning it off, let the simulator handle the aircraft
+            // (falling down, typically). When turning it on, take control.
+            if (ignitionSwitch && !state->readonly.ignitionSwitch) {
+                ignitionSwitch = false;
+                unfreezeSimulation(state->readonly);
+                gotFirstState = false;
+                break;
+            } else if (!ignitionSwitch && state->readonly.ignitionSwitch) {
+                ignitionSwitch = true;
+                freezeSimulation(state->readonly);
+                setMotionlessState(state->state);
+            } else if (!state->readonly.ignitionSwitch)
                 break;
 
             ++stateRequestDispatchCounter;
@@ -486,6 +503,7 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
 
                 if (!gotFirstState) {
                     setMotionlessState(state->state);
+                    ignitionSwitch = state->readonly.ignitionSwitch;
                     gotFirstState = true;
                 } else {
                     // Arbitrary choice: Full rudder pedal deflection means 45 degrees per second yaw rate.
@@ -752,6 +770,7 @@ static void initialize() {
 
     stateRequestDispatchCounter = 0;
     gotFirstState = false;
+    ignitionSwitch = false;
 
     RECORD(SimConnect_RequestDataOnSimObject(hSimConnect,
                                              RequestAllState, DataDefinitionAllState,
