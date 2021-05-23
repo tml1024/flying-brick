@@ -6,3 +6,6 @@
 # Emacs backup and temporary files
 *~
 \#*
+
+# Blender auto-save and backup files
+*.blend[1-9]*
