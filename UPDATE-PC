@@ -5,5 +5,7 @@ tar -c -f - \
     --exclude '*.orig' \
     --exclude '.gitignore' \
     FlyingBrick.blend \
-    Project/PackageSources |
+    Project/PackageSources \
+    Modules/FlyingBrick/FlyingBrick/*.cpp Modules/FlyingBrick/FlyingBrick/*.h \
+    | \
     (cd /Volumes/stinky/Users/tml/OneDrive/flying-brick && tar xvf -)
