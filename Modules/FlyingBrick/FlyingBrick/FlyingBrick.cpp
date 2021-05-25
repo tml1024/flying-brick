@@ -84,7 +84,7 @@ static bool simPaused = true;
 static bool gotFirstState = false;
 static bool ignitionSwitch = false;
 
-static uint64_t stateRequestDispatchCounter;
+static int stateRequestDispatchCounter;
 
 static std::map<DWORD, std::string> calls;
 
@@ -308,28 +308,34 @@ static std::string panel_service(int type) {
 }
 
 static void dumpReadonlyState(const ReadonlyState &state) {
-    std::cout << " rudder:" << std::fixed << std::setw(5) << std::setprecision(2) << state.rudder
-              << " aileron:" << std::fixed << std::setw(5) << std::setprecision(2) << state.aileron
-              << " elevator:" << std::fixed << std::setw(5) << std::setprecision(2) << state.elevator
-              << " throttle:" << std::fixed << std::setw(5) << std::setprecision(2) << state.throttle
-              << " agl:" << std::fixed << std::setw(6) << std::setprecision(1) << state.agl;
+    std::cout << " rud:" << std::fixed << std::setw(5) << std::setprecision(2) << state.rudder
+              << " ail:" << std::fixed << std::setw(5) << std::setprecision(2) << state.aileron
+              << " ele:" << std::fixed << std::setw(5) << std::setprecision(2) << state.elevator
+              << " thr:" << std::fixed << std::setw(5) << std::setprecision(2) << state.throttle
+              << " /"
+              << " agl:" << std::fixed << std::setw(6) << std::setprecision(1) << state.agl
+              << " gnd: " << (state.onGround ? "Y" : "N")
+              << " ign: " << (state.ignitionSwitch ? "Y" : "N")
+              << " frz: " << (state.altFreeze ? "Y" : "N") << (state.attFreeze ? "Y" : "N") << (state.posFreeze ? "Y" : "N");
 }
 
 static void dumpMutableState(const MutableState &state) {
-    std::cout << " heading:" << std::setw(3) << int(rad2deg(state.heading))
-              << " bank:" << std::setw(4) << int(rad2deg(state.bank))
-              << " pitch:" << std::setw(4) << int(rad2deg(state.pitch))
+    std::cout << " hdg:" << std::setw(3) << int(rad2deg(state.heading))
+              << " bnk:" << std::setw(4) << int(rad2deg(state.bank))
+              << " pit:" << std::setw(4) << int(rad2deg(state.pitch))
               << " pos: " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state.lat)) << (state.lat > 0 ? "N" : "S")
               << " " << std::fixed << std::setprecision(4) << std::abs(rad2deg(state.lon)) << (state.lon > 0 ? "E" : "W")
               << " msl:" << std::fixed << std::setw(6) << std::setprecision(1) << state.msl
-              << " / body:" << std::fixed << std::setw(5) << std::setprecision(2) << state.velBodyX
+              << " /"
+              << " bod:" << std::fixed << std::setw(5) << std::setprecision(2) << state.velBodyX
               << "," << std::fixed << std::setw(5) << std::setprecision(2) << state.velBodyY
               << "," << std::fixed << std::setw(5) << std::setprecision(2) << state.velBodyZ
-              << " world:" << std::fixed << std::setw(5) << std::setprecision(2) << state.velWorldX
+              << " wld:" << std::fixed << std::setw(5) << std::setprecision(2) << state.velWorldX
               << "," << std::fixed << std::setw(5) << std::setprecision(2) << state.velWorldY
               << "," << std::fixed << std::setw(5) << std::setprecision(2) << state.velWorldZ
-              << " / kias:" << std::fixed << std::setw(3) << std::setprecision(0) << state.kias
-              << " ktas:" << std::fixed << std::setw(3) << std::setprecision(0) << state.ktas
+              << " /"
+              << " ias:" << std::fixed << std::setw(3) << std::setprecision(0) << state.kias
+              << " tas:" << std::fixed << std::setw(3) << std::setprecision(0) << state.ktas
               << " alt:"  << std::fixed << std::setw(6) << std::setprecision(1) << state.alt
               << " vs:" << std::fixed << std::setw(6) << std::setprecision(1) << state.vs;
 }
@@ -357,9 +363,12 @@ static void setMotionlessState(const MutableState &state, MutableState &control)
 
     control = state;
 
-    // Keep lat, lon, msl as is
+    // Keep heading as is
 
     control.bank = control.pitch = 0;
+
+    // Keep lat, lon, msl as is
+
     control.velBodyX = control.velBodyY = control.velBodyZ = 0;
     control.velWorldX = control.velWorldY = control.velWorldZ = 0;
 
@@ -370,17 +379,19 @@ static void setMotionlessState(const MutableState &state, MutableState &control)
     control.vs = 0;
 }
 
-static void setDirectControl(const MutableState &control) {
+static bool doDisplay(const ReadonlyState &state) {
+    return state.agl < 10 || (stateRequestDispatchCounter % 50) == 0;
+}
 
-    RECORD(SimConnect_SetDataOnSimObject(hSimConnect, DataDefinitionMutableState,
-                                         SIMCONNECT_OBJECT_ID_USER, 0,
-                                         0, sizeof(MutableState), (void*)&control));
-    if (stateRequestDispatchCounter < 50 || (stateRequestDispatchCounter % 50) == 0) {
-        std::cout << THISAIRCRAFT ": Set state:";
+static void setDirectControl(const ReadonlyState &ronly, const MutableState &control) {
+    if (doDisplay(ronly)) {
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set state:";
         dumpMutableState(control);
         std::cout << std::flush;
     }
-
+    RECORD(SimConnect_SetDataOnSimObject(hSimConnect, DataDefinitionMutableState,
+                                         SIMCONNECT_OBJECT_ID_USER, 0,
+                                         0, sizeof(MutableState), (void*)&control));
 }
 
 static bool setVerticalSpeed(double throttle, double timeSinceLast, MutableState &control) {
@@ -429,6 +440,10 @@ static void unfreezeSimulation(const ReadonlyState &state) {
 
 static void handleState(const AllState &state) {
             
+    // If paused, do nothing
+    if (simPaused)
+        return;
+
     static MutableState directControl;
 
     // Check if we are in a "zombie" state when the sim is in the main menu, at "Null Island" (0N 0E).
@@ -436,8 +451,13 @@ static void handleState(const AllState &state) {
     if (std::abs(state.state.lat) < 0.0001 && std::abs(state.state.lon) < 0.0001)
         return;
 
+    // Another "zombie" state: Deep down under ground or up in the stratosphere.
+    if (state.readonly.agl < -100 || state.readonly.agl > 100000 || state.state.msl < -100 || state.state.msl > 100000)
+        return;
+
     // If ignition switch off, do nothing. When turning it off, let the simulator handle the aircraft
     // falling down, typically. When turning it on, take control.
+
     if (ignitionSwitch && !state.readonly.ignitionSwitch) {
         ignitionSwitch = false;
         unfreezeSimulation(state.readonly);
@@ -455,11 +475,11 @@ static void handleState(const AllState &state) {
 
     ++stateRequestDispatchCounter;
 
-    if (stateRequestDispatchCounter < 50 || (stateRequestDispatchCounter % 50) == 0) {
+    if (doDisplay(state.readonly)) {
         std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
         dumpReadonlyState(state.readonly);
         std::cout << std::flush;
-        std::cout << THISAIRCRAFT ": Got state:";
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got state:";
         dumpMutableState(state.state);
         std::cout << std::flush;
     }
@@ -525,31 +545,22 @@ static void handleState(const AllState &state) {
             // Vertical speed and position handled in setVerticalSpeed().
             setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
         }
-        setDirectControl(directControl);
+        setDirectControl(state.readonly, directControl);
         lastTime = now;
-    } else if (state.readonly.agl < 0) {
+    } else {
 
-        // If we are below ground, something is badly wrong. Jump 200 ft above ground.
-
-        directControl.velBodyX = directControl.velBodyY = directControl.velBodyZ = 0;
-        directControl.velWorldX = directControl.velWorldY = directControl.velWorldZ = 0;
-        directControl.msl += -state.readonly.agl + 200;
-        directControl.kias = directControl.ktas = 0;
-        directControl.alt = directControl.msl;
-        directControl.vs = 0;
-        setDirectControl(directControl);
-    } else if (!aboveGround(state.readonly)) {
+        assert(!aboveGround(state.readonly));
 
         // Vertical velocity however can be changed while on the ground. We can lift off.
 
         if (throttle2vs(state.readonly.throttle) > 0) {
             setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
             freezeSimulation(state.readonly);
-            setDirectControl(directControl);
+            setDirectControl(state.readonly, directControl);
             lastTime = now;
-        } else {
+        } else if (gotFirstState) {
             setMotionlessState(state.state, directControl);
-            setDirectControl(directControl);
+            setDirectControl(state.readonly, directControl);
 
             // Let the simulator itself handle it on ground
             unfreezeSimulation(state.readonly);
@@ -579,15 +590,11 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
         break;
     }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
-
-        // If paused, do nothing
-        if (simPaused)
-            break;
-
         SIMCONNECT_RECV_SIMOBJECT_DATA *data = (SIMCONNECT_RECV_SIMOBJECT_DATA*)pData;
         switch (data->dwRequestID) {
         case RequestAllState:
             handleState(*(AllState*)&data->dwData);
+            break;
         default:
             assert(false);
         }
