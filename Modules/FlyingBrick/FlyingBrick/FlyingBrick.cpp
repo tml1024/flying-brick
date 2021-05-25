@@ -427,6 +427,138 @@ static void unfreezeSimulation(const ReadonlyState &state) {
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
 }
 
+static void handleState(const AllState &state) {
+            
+    static MutableState directControl;
+
+    // Check if we are in a "zombie" state when the sim is in the main menu, at "Null Island" (0N 0E).
+    // In that case, do nothing.
+    if (std::abs(state.state.lat) < 0.0001 && std::abs(state.state.lon) < 0.0001)
+        return;
+
+    // If ignition switch off, do nothing. When turning it off, let the simulator handle the aircraft
+    // falling down, typically. When turning it on, take control.
+    if (ignitionSwitch && !state.readonly.ignitionSwitch) {
+        ignitionSwitch = false;
+        unfreezeSimulation(state.readonly);
+        gotFirstState = false;
+        return;
+    }
+
+    if (!ignitionSwitch && state.readonly.ignitionSwitch) {
+        ignitionSwitch = true;
+        freezeSimulation(state.readonly);
+        setMotionlessState(state.state, directControl);
+    } else if (!state.readonly.ignitionSwitch) {
+        return;
+    }
+
+    ++stateRequestDispatchCounter;
+
+    if (stateRequestDispatchCounter < 50 || (stateRequestDispatchCounter % 50) == 0) {
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
+        dumpReadonlyState(state.readonly);
+        std::cout << std::flush;
+        std::cout << THISAIRCRAFT ": Got state:";
+        dumpMutableState(state.state);
+        std::cout << std::flush;
+    }
+
+    std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
+    static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
+    auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
+
+    // Obviously we can turn and move only in the air
+    if (aboveGround(state.readonly)) {
+
+        // Make sure the simulator itself is not trying to move the aircraft.
+        freezeSimulation(state.readonly);
+
+        if (!gotFirstState) {
+            setMotionlessState(state.state, directControl);
+            ignitionSwitch = state.readonly.ignitionSwitch;
+            gotFirstState = true;
+        } else {
+            // Arbitrary choice: Full rudder pedal deflection means 45 degrees per second yaw rate.
+            auto diff = state.readonly.rudder * timeSinceLast / 1000 * deg2rad(45);
+            directControl.heading += diff;
+            while (directControl.heading >= 2 * M_PI)
+                directControl.heading -= 2 * M_PI;
+            while (directControl.heading < 0)
+                directControl.heading += 2 * M_PI;
+
+            // Another arbitrary choice: Full elevator control deflection means 100 knots GS
+            // forward or 50 knots backward. Full aileron control deflection means 50 knots left or right.
+
+            // Stick pushed forward: negative elevator input, set speed forward.
+            // Stick pulled back: positive elevator input, set speed backward.
+            if (state.readonly.elevator < -HUNDREDTH)
+                directControl.velBodyZ = -state.readonly.elevator * kn2fps(100);
+            else if (state.readonly.elevator > HUNDREDTH)
+                directControl.velBodyZ = -state.readonly.elevator * kn2fps(50);
+            else
+                directControl.velBodyZ = 0;
+
+            // Stick tilted sideways: aileron input, set speed sideways
+            if (std::abs(state.readonly.aileron) > HUNDREDTH)
+                directControl.velBodyX = state.readonly.aileron * kn2fps(50);
+            else
+                directControl.velBodyX = 0;
+
+            const double bodyRelativeAbsoluteVelocity = std::sqrt(directControl.velBodyZ * directControl.velBodyZ
+                                                                  + directControl.velBodyX * directControl.velBodyX);
+            const double bodyRelativeTrack = M_PI/2 - std::atan2(directControl.velBodyZ, directControl.velBodyX);
+            const double worldRelativeTrack = directControl.heading + bodyRelativeTrack;
+
+            directControl.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+            directControl.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+
+            // This is just a toy, so use a spherical Earth approximation and ignore the poles
+            // and the antimeridian.
+            directControl.lat += directControl.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
+            directControl.lon += directControl.velWorldX * timeSinceLast / 1000 * std::cos(directControl.lat) / EARTH_RADIUS_FT;
+
+            // Assume this aircraft is used only at low altitudes and ignore wind
+            directControl.kias = fps2kn(bodyRelativeAbsoluteVelocity);
+            directControl.ktas = directControl.kias;
+
+            // Vertical speed and position handled in setVerticalSpeed().
+            setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
+        }
+        setDirectControl(directControl);
+        lastTime = now;
+    } else if (state.readonly.agl < 0) {
+
+        // If we are below ground, something is badly wrong. Jump 200 ft above ground.
+
+        directControl.velBodyX = directControl.velBodyY = directControl.velBodyZ = 0;
+        directControl.velWorldX = directControl.velWorldY = directControl.velWorldZ = 0;
+        directControl.msl += -state.readonly.agl + 200;
+        directControl.kias = directControl.ktas = 0;
+        directControl.alt = directControl.msl;
+        directControl.vs = 0;
+        setDirectControl(directControl);
+    } else if (!aboveGround(state.readonly)) {
+
+        // Vertical velocity however can be changed while on the ground. We can lift off.
+
+        if (throttle2vs(state.readonly.throttle) > 0) {
+            setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
+            freezeSimulation(state.readonly);
+            setDirectControl(directControl);
+            lastTime = now;
+        } else {
+            setMotionlessState(state.state, directControl);
+            setDirectControl(directControl);
+
+            // Let the simulator itself handle it on ground
+            unfreezeSimulation(state.readonly);
+
+            gotFirstState = false;
+        }
+    }
+}
+
 static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     if (failed)
         return;
@@ -448,142 +580,14 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
 
-        static MutableState directControl;
-
         // If paused, do nothing
         if (simPaused)
             break;
 
         SIMCONNECT_RECV_SIMOBJECT_DATA *data = (SIMCONNECT_RECV_SIMOBJECT_DATA*)pData;
         switch (data->dwRequestID) {
-        case RequestAllState: {
-            AllState *state = (AllState*)&data->dwData;
-            
-            // Check if we are in a "zombie" state when the sim is in the main menu, at "Null Island" (0N 0E).
-            // In that case, do nothing.
-            if (std::abs(state->state.lat) < 0.0001 && std::abs(state->state.lon) < 0.0001)
-                break;
-
-            // If ignition switch off, do nothing. When turning it off, let the simulator handle the aircraft
-            // (falling down, typically). When turning it on, take control.
-            if (ignitionSwitch && !state->readonly.ignitionSwitch) {
-                ignitionSwitch = false;
-                unfreezeSimulation(state->readonly);
-                gotFirstState = false;
-                break;
-            } else if (!ignitionSwitch && state->readonly.ignitionSwitch) {
-                ignitionSwitch = true;
-                freezeSimulation(state->readonly);
-                setMotionlessState(state->state, directControl);
-            } else if (!state->readonly.ignitionSwitch)
-                break;
-
-            ++stateRequestDispatchCounter;
-
-            if (stateRequestDispatchCounter < 50 || (stateRequestDispatchCounter % 50) == 0) {
-                std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
-                dumpReadonlyState(state->readonly);
-                std::cout << std::flush;
-                std::cout << THISAIRCRAFT ": Got state:";
-                dumpMutableState(state->state);
-                std::cout << std::flush;
-            }
-
-            std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
-            static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
-            auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
-
-            // Obviously we can turn and move only in the air
-            if (aboveGround(state->readonly)) {
-
-                // Make sure the simulator itself is not trying to move the aircraft.
-                freezeSimulation(state->readonly);
-
-                if (!gotFirstState) {
-                    setMotionlessState(state->state, directControl);
-                    ignitionSwitch = state->readonly.ignitionSwitch;
-                    gotFirstState = true;
-                } else {
-                    // Arbitrary choice: Full rudder pedal deflection means 45 degrees per second yaw rate.
-                    auto diff = state->readonly.rudder * timeSinceLast / 1000 * deg2rad(45);
-                    directControl.heading += diff;
-                    while (directControl.heading >= 2 * M_PI)
-                        directControl.heading -= 2 * M_PI;
-                    while (directControl.heading < 0)
-                        directControl.heading += 2 * M_PI;
-
-                    // Another arbitrary choice: Full elevator control deflection means 100 knots GS
-                    // forward or 50 knots backward. Full aileron control deflection means 50 knots left or right.
-
-                    // Stick pushed forward: negative elevator input, set speed forward.
-                    // Stick pulled back: positive elevator input, set speed backward.
-                    if (state->readonly.elevator < -HUNDREDTH)
-                        directControl.velBodyZ = -state->readonly.elevator * kn2fps(100);
-                    else if (state->readonly.elevator > HUNDREDTH)
-                        directControl.velBodyZ = -state->readonly.elevator * kn2fps(50);
-                    else
-                        directControl.velBodyZ = 0;
-
-                    // Stick tilted sideways: aileron input, set speed sideways
-                    if (std::abs(state->readonly.aileron) > HUNDREDTH)
-                        directControl.velBodyX = state->readonly.aileron * kn2fps(50);
-                    else
-                        directControl.velBodyX = 0;
-
-                    const double bodyRelativeAbsoluteVelocity = std::sqrt(directControl.velBodyZ * directControl.velBodyZ
-                                                                          + directControl.velBodyX * directControl.velBodyX);
-                    const double bodyRelativeTrack = M_PI/2 - std::atan2(directControl.velBodyZ, directControl.velBodyX);
-                    const double worldRelativeTrack = directControl.heading + bodyRelativeTrack;
-
-                    directControl.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
-                    directControl.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
-
-                    // This is just a toy, so use a spherical Earth approximation and ignore the poles
-                    // and the antimeridian.
-                    directControl.lat += directControl.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
-                    directControl.lon += directControl.velWorldX * timeSinceLast / 1000 * std::cos(directControl.lat) / EARTH_RADIUS_FT;
-
-                    // Assume this aircraft is used only at low altitudes and ignore wind
-                    directControl.kias = fps2kn(bodyRelativeAbsoluteVelocity);
-                    directControl.ktas = directControl.kias;
-
-                    // Vertical speed and position handled in setVerticalSpeed().
-                    setVerticalSpeed(state->readonly.throttle, timeSinceLast, directControl);
-                }
-                setDirectControl(directControl);
-                lastTime = now;
-            } else if (state->readonly.agl < 0) {
-
-                // If we are below ground, something is badly wrong. Jump 200 ft above ground.
-
-                directControl.velBodyX = directControl.velBodyY = directControl.velBodyZ = 0;
-                directControl.velWorldX = directControl.velWorldY = directControl.velWorldZ = 0;
-                directControl.msl += -state->readonly.agl + 200;
-                directControl.kias = directControl.ktas = 0;
-                directControl.alt = directControl.msl;
-                directControl.vs = 0;
-                setDirectControl(directControl);
-            } else if (!aboveGround(state->readonly)) {
-
-                // Vertical velocity however can be changed while on the ground. We can lift off.
-
-                if (throttle2vs(state->readonly.throttle) > 0) {
-                    setVerticalSpeed(state->readonly.throttle, timeSinceLast, directControl);
-                    freezeSimulation(state->readonly);
-                    setDirectControl(directControl);
-                    lastTime = now;
-                } else {
-                    setMotionlessState(state->state, directControl);
-                    setDirectControl(directControl);
-
-                    // Let the simulator itself handle it on ground
-                    unfreezeSimulation(state->readonly);
-
-                    gotFirstState = false;
-                }
-            }
-            break;
-        }
+        case RequestAllState:
+            handleState(*(AllState*)&data->dwData);
         default:
             assert(false);
         }
