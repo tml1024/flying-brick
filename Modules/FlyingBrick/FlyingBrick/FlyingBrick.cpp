@@ -16,11 +16,9 @@
 #include "SimConnect.h"
 #pragma GCC diagnostic pop
 
-#define THISAIRCRAFT "FlyingBrick"
-
 #include "minIni.h"
 
-#include "FlyingBrick.h"
+#include "ThisAircraft.h"
 
 static HANDLE hSimConnect = 0;
 
@@ -86,8 +84,6 @@ static bool simPaused = true;
 static bool gotFirstState = false;
 static bool ignitionSwitch = false;
 
-static MutableState desiredState;
-
 static uint64_t stateRequestDispatchCounter;
 
 static std::map<DWORD, std::string> calls;
@@ -96,7 +92,7 @@ static HRESULT recordCall(int lineNumber,
                           std::string call,
                           HRESULT value) {
     if (!SUCCEEDED(value)) {
-        std::cerr << "FlyingBrick: The call '" << call << "' failed at line " << lineNumber << std::flush;
+        std::cerr << THISAIRCRAFT ": The call '" << call << "' failed at line " << lineNumber << std::flush;
         failed = true;
         return value;
     }
@@ -356,47 +352,47 @@ static double throttle2vs(double throttle) {
         return 0;
 }
 
-static void setMotionlessState(const MutableState &state) {
+static void setMotionlessState(const MutableState &state, MutableState &control) {
     // Set the desired initial state: motionless
 
-    desiredState = state;
+    control = state;
 
     // Keep lat, lon, msl as is
 
-    desiredState.bank = desiredState.pitch = 0;
-    desiredState.velBodyX = desiredState.velBodyY = desiredState.velBodyZ = 0;
-    desiredState.velWorldX = desiredState.velWorldY = desiredState.velWorldZ = 0;
+    control.bank = control.pitch = 0;
+    control.velBodyX = control.velBodyY = control.velBodyZ = 0;
+    control.velWorldX = control.velWorldY = control.velWorldZ = 0;
 
-    desiredState.kias = desiredState.ktas = 0;
+    control.kias = control.ktas = 0;
 
     // Keep alt as is
 
-    desiredState.vs = 0;
+    control.vs = 0;
 }
 
-static void setDesiredStateData() {
+static void setDirectControl(const MutableState &control) {
 
     RECORD(SimConnect_SetDataOnSimObject(hSimConnect, DataDefinitionMutableState,
                                          SIMCONNECT_OBJECT_ID_USER, 0,
-                                         0, sizeof(MutableState), &desiredState));
+                                         0, sizeof(MutableState), (void*)&control));
     if (stateRequestDispatchCounter < 50 || (stateRequestDispatchCounter % 50) == 0) {
-        std::cout << "FlyingBrick: Set state:";
-        dumpMutableState(desiredState);
+        std::cout << THISAIRCRAFT ": Set state:";
+        dumpMutableState(control);
         std::cout << std::flush;
     }
 
 }
 
-static bool setVerticalSpeed(double throttle, double timeSinceLast) {
+static bool setVerticalSpeed(double throttle, double timeSinceLast, MutableState &control) {
     const double vs = throttle2vs(throttle);
     if (vs != 0) {
-        desiredState.velBodyY = vs;
-        desiredState.velWorldY = desiredState.velBodyY;
+        control.velBodyY = vs;
+        control.velWorldY = control.velBodyY;
 
-        const double diffY = desiredState.velWorldY * timeSinceLast / 1000;
-        desiredState.alt += diffY;
-        desiredState.msl += diffY;
-        desiredState.vs = fps2fpm(vs);
+        const double diffY = control.velWorldY * timeSinceLast / 1000;
+        control.alt += diffY;
+        control.msl += diffY;
+        control.vs = fps2fpm(vs);
 
         return true;
     }
@@ -442,15 +438,17 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
         switch(event->uEventID) {
         case EventPause:
             simPaused = event->dwData;
-            std::cout << "FlyingBrick: PAUSE " << (simPaused ? "ON" : "OFF") << std::flush;
+            std::cout << THISAIRCRAFT ": PAUSE " << (simPaused ? "ON" : "OFF") << std::flush;
             break;
         default:
-            std::cout << "FlyingBrick: EVENT " << event->uEventID << " " << event->dwData << std::flush;
+            std::cout << THISAIRCRAFT ": EVENT " << event->uEventID << " " << event->dwData << std::flush;
             break;
         }
         break;
     }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
+
+        static MutableState directControl;
 
         // If paused, do nothing
         if (simPaused)
@@ -476,17 +474,17 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
             } else if (!ignitionSwitch && state->readonly.ignitionSwitch) {
                 ignitionSwitch = true;
                 freezeSimulation(state->readonly);
-                setMotionlessState(state->state);
+                setMotionlessState(state->state, directControl);
             } else if (!state->readonly.ignitionSwitch)
                 break;
 
             ++stateRequestDispatchCounter;
 
             if (stateRequestDispatchCounter < 50 || (stateRequestDispatchCounter % 50) == 0) {
-                std::cout << "FlyingBrick: " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
+                std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
                 dumpReadonlyState(state->readonly);
                 std::cout << std::flush;
-                std::cout << "FlyingBrick: Got state:";
+                std::cout << THISAIRCRAFT ": Got state:";
                 dumpMutableState(state->state);
                 std::cout << std::flush;
             }
@@ -502,17 +500,17 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
                 freezeSimulation(state->readonly);
 
                 if (!gotFirstState) {
-                    setMotionlessState(state->state);
+                    setMotionlessState(state->state, directControl);
                     ignitionSwitch = state->readonly.ignitionSwitch;
                     gotFirstState = true;
                 } else {
                     // Arbitrary choice: Full rudder pedal deflection means 45 degrees per second yaw rate.
                     auto diff = state->readonly.rudder * timeSinceLast / 1000 * deg2rad(45);
-                    desiredState.heading += diff;
-                    while (desiredState.heading >= 2 * M_PI)
-                        desiredState.heading -= 2 * M_PI;
-                    while (desiredState.heading < 0)
-                        desiredState.heading += 2 * M_PI;
+                    directControl.heading += diff;
+                    while (directControl.heading >= 2 * M_PI)
+                        directControl.heading -= 2 * M_PI;
+                    while (directControl.heading < 0)
+                        directControl.heading += 2 * M_PI;
 
                     // Another arbitrary choice: Full elevator control deflection means 100 knots GS
                     // forward or 50 knots backward. Full aileron control deflection means 50 knots left or right.
@@ -520,63 +518,63 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
                     // Stick pushed forward: negative elevator input, set speed forward.
                     // Stick pulled back: positive elevator input, set speed backward.
                     if (state->readonly.elevator < -HUNDREDTH)
-                        desiredState.velBodyZ = -state->readonly.elevator * kn2fps(100);
+                        directControl.velBodyZ = -state->readonly.elevator * kn2fps(100);
                     else if (state->readonly.elevator > HUNDREDTH)
-                        desiredState.velBodyZ = -state->readonly.elevator * kn2fps(50);
+                        directControl.velBodyZ = -state->readonly.elevator * kn2fps(50);
                     else
-                        desiredState.velBodyZ = 0;
+                        directControl.velBodyZ = 0;
 
                     // Stick tilted sideways: aileron input, set speed sideways
                     if (std::abs(state->readonly.aileron) > HUNDREDTH)
-                        desiredState.velBodyX = state->readonly.aileron * kn2fps(50);
+                        directControl.velBodyX = state->readonly.aileron * kn2fps(50);
                     else
-                        desiredState.velBodyX = 0;
+                        directControl.velBodyX = 0;
 
-                    const double bodyRelativeAbsoluteVelocity = std::sqrt(desiredState.velBodyZ * desiredState.velBodyZ
-                                                                          + desiredState.velBodyX * desiredState.velBodyX);
-                    const double bodyRelativeTrack = M_PI/2 - std::atan2(desiredState.velBodyZ, desiredState.velBodyX);
-                    const double worldRelativeTrack = desiredState.heading + bodyRelativeTrack;
+                    const double bodyRelativeAbsoluteVelocity = std::sqrt(directControl.velBodyZ * directControl.velBodyZ
+                                                                          + directControl.velBodyX * directControl.velBodyX);
+                    const double bodyRelativeTrack = M_PI/2 - std::atan2(directControl.velBodyZ, directControl.velBodyX);
+                    const double worldRelativeTrack = directControl.heading + bodyRelativeTrack;
 
-                    desiredState.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
-                    desiredState.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+                    directControl.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+                    directControl.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
 
                     // This is just a toy, so use a spherical Earth approximation and ignore the poles
                     // and the antimeridian.
-                    desiredState.lat += desiredState.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
-                    desiredState.lon += desiredState.velWorldX * timeSinceLast / 1000 * std::cos(desiredState.lat) / EARTH_RADIUS_FT;
+                    directControl.lat += directControl.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
+                    directControl.lon += directControl.velWorldX * timeSinceLast / 1000 * std::cos(directControl.lat) / EARTH_RADIUS_FT;
 
                     // Assume this aircraft is used only at low altitudes and ignore wind
-                    desiredState.kias = fps2kn(bodyRelativeAbsoluteVelocity);
-                    desiredState.ktas = desiredState.kias;
+                    directControl.kias = fps2kn(bodyRelativeAbsoluteVelocity);
+                    directControl.ktas = directControl.kias;
 
                     // Vertical speed and position handled in setVerticalSpeed().
-                    setVerticalSpeed(state->readonly.throttle, timeSinceLast);
+                    setVerticalSpeed(state->readonly.throttle, timeSinceLast, directControl);
                 }
-                setDesiredStateData();
+                setDirectControl(directControl);
                 lastTime = now;
             } else if (state->readonly.agl < 0) {
 
                 // If we are below ground, something is badly wrong. Jump 200 ft above ground.
 
-                desiredState.velBodyX = desiredState.velBodyY = desiredState.velBodyZ = 0;
-                desiredState.velWorldX = desiredState.velWorldY = desiredState.velWorldZ = 0;
-                desiredState.msl += -state->readonly.agl + 200;
-                desiredState.kias = desiredState.ktas = 0;
-                desiredState.alt = desiredState.msl;
-                desiredState.vs = 0;
-                setDesiredStateData();
+                directControl.velBodyX = directControl.velBodyY = directControl.velBodyZ = 0;
+                directControl.velWorldX = directControl.velWorldY = directControl.velWorldZ = 0;
+                directControl.msl += -state->readonly.agl + 200;
+                directControl.kias = directControl.ktas = 0;
+                directControl.alt = directControl.msl;
+                directControl.vs = 0;
+                setDirectControl(directControl);
             } else if (!aboveGround(state->readonly)) {
 
                 // Vertical velocity however can be changed while on the ground. We can lift off.
 
                 if (throttle2vs(state->readonly.throttle) > 0) {
-                    setVerticalSpeed(state->readonly.throttle, timeSinceLast);
+                    setVerticalSpeed(state->readonly.throttle, timeSinceLast, directControl);
                     freezeSimulation(state->readonly);
-                    setDesiredStateData();
+                    setDirectControl(directControl);
                     lastTime = now;
                 } else {
-                    setMotionlessState(state->state);
-                    setDesiredStateData();
+                    setMotionlessState(state->state, directControl);
+                    setDirectControl(directControl);
 
                     // Let the simulator itself handle it on ground
                     unfreezeSimulation(state->readonly);
@@ -593,7 +591,7 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     }
     case SIMCONNECT_RECV_ID_EXCEPTION: {
         SIMCONNECT_RECV_EXCEPTION *exception = (SIMCONNECT_RECV_EXCEPTION*)pData;
-        std::cerr << "FlyingBrick: EXCEPTION "
+        std::cerr << THISAIRCRAFT ": EXCEPTION "
                   << exception_type(exception->dwException) << " "
                   << (calls.count(exception->dwSendID) ? ("from " + calls[exception->dwSendID]) : "from unknown API call") << " "
                   << exception->dwIndex
@@ -609,7 +607,7 @@ static bool flight_model_callback(const char *Section, const char *Key, const ch
         && strcasecmp(Key, "static_cg_height") == 0) {
 
         static_cg_height = strtod(Value, NULL);
-        std::cout << "FlyingBrick: Static CG height from flight_model.cfg: " << static_cg_height << "ft" << std::flush;
+        std::cout << THISAIRCRAFT ": Static CG height from flight_model.cfg: " << static_cg_height << "ft" << std::flush;
 
         // That is all we want.
         return false;
@@ -623,11 +621,11 @@ static void initialize() {
     if (hSimConnect != 0)
         return;
 
-    if (!SUCCEEDED(SimConnect_Open(&hSimConnect, "FlyingBrick", nullptr, 0, 0, 0))) {
-        std::cerr << "FlyingBrick: SimConnect_Open failed" << std::flush;
+    if (!SUCCEEDED(SimConnect_Open(&hSimConnect, THISAIRCRAFT, nullptr, 0, 0, 0))) {
+        std::cerr << THISAIRCRAFT ": SimConnect_Open failed" << std::flush;
         return;
     }
-    std::cout << "FlyingBrick: Connected" << std::flush;
+    std::cout << THISAIRCRAFT ": Connected" << std::flush;
 
     // Read our flight_model.cfg to avoid having to duplicate some information as magic numbers in this file.
     ini_browse(flight_model_callback, NULL, ".\\SimObjects\\Airplanes\\" THISAIRCRAFT "\\flight_model.cfg");
@@ -793,7 +791,7 @@ static void deinitialize() {
                                              DWORD_MAX));
 
     if (!SUCCEEDED(SimConnect_Close(hSimConnect))) {
-        std::cerr << "FlyingBrick: SimConnect_Close failed" << std::flush;
+        std::cerr << THISAIRCRAFT ": SimConnect_Close failed" << std::flush;
         return;
     }
 
