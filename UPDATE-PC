@@ -8,4 +8,4 @@ tar -c -f - \
     Project/PackageSources \
     Modules/FlyingBrick/FlyingBrick/*.cpp Modules/FlyingBrick/FlyingBrick/*.h \
     | \
-    (cd /Volumes/stinky/Users/tml/OneDrive/flying-brick && tar xvf -)
+    (cd /Volumes/stinky/Users/tml/OneDrive/flying-brick && tar -x --unlink -v -f -)
