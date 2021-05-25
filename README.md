@@ -34,21 +34,28 @@ keep the existing style for code and configuration files:
 
 ## Flying the thing
 
-You ideally need to use a control stick (or yoke that returns to the
-centre position if you let go of it), rudder pedals, and separate
-throttle and mixture levers.
+You need to use a control stick (or yoke that returns to the centre
+position if you let go of it), rudder pedals (or twistable joystick),
+and a throttle lever.
 
 When you push the stick forward, the aircraft goes forward. When you
 pull it backwards, it goes backwars. Push to the side and it goes
 sidewards.
 
-Use the rudder pedals and it turns around the vertical axis.
+Use the rudder pedals (or twist the joystick) and it turns around the
+vertical axis.
 
-To control vertical movement, use the throttle and mixture levers.
-Both at zero and it keeps its altidue. Increase throttle while keeping
-mixture at zero and the vertical speed increases. Increase mixture
-while keeping throttle at zero and you go downwards.
+To control vertical movement, use the throttle. Throttle in the middle
+keeps its altidue. Increase throttle and the vertical speed increases.
+Decrease throttle and you go downwards.
 
 Very simple. This is a sample and a toy with quite unrelatistic
 behaviour. No inertia or moment of inertia is taken into account. The
 controls affect the velocities directly.
+
+## Problems
+
+The behaviour when "landing" is broken. The state management in the
+Wasm module needs work.
+
+There is annoying stutter in the view, especially close to ground.
