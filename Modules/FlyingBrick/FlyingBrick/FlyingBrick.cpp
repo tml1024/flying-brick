@@ -37,6 +37,7 @@ enum Event : SIMCONNECT_CLIENT_EVENT_ID {
     EventFreezeAltSet,
     EventFreezeAttSet,
     EventFreezePosSet,
+    EventParkingBrakeToggle
 };
 
 enum Request : DWORD {
@@ -55,6 +56,7 @@ struct ReadonlyState {
     double velWindX, velWindY, velWindZ;
     int64_t onGround;
     int64_t ignitionSwitch;
+    double parkingBrake;
     int64_t altFreeze, attFreeze, posFreeze;
 };
 
@@ -81,9 +83,12 @@ struct AllState {
 // to continue attempting to do anything.
 static bool failed = false;
 
-static bool simPaused = true;
+static bool simPaused = false;                    // Whether the "Paused" event with value 1 has been received
 static bool gotFirstState = false;
-static bool ignitionSwitch = false;
+static bool simFrozen = false;                    // Whether we are controlling the aircraft or not
+static bool landing = false;
+static bool takingOff = false;
+static bool ignitionSwitch = false;               // Whether the ignition switch was last seen on or off
 
 static int stateRequestDispatchCounter;
 
@@ -321,6 +326,7 @@ static void dumpReadonlyState(const ReadonlyState &state) {
               << " agl:" << std::fixed << std::setw(6) << std::setprecision(1) << state.agl
               << " gnd: " << (state.onGround ? "Y" : "N")
               << " ign: " << (state.ignitionSwitch ? "Y" : "N")
+              << " brk:" << std::fixed << std::setw(5) << std::setprecision(2) << state.parkingBrake
               << " frz: " << (state.altFreeze ? "Y" : "N") << (state.attFreeze ? "Y" : "N") << (state.posFreeze ? "Y" : "N");
 }
 
@@ -382,10 +388,14 @@ static void setMotionlessState(const MutableState &state, MutableState &control)
     // Keep alt as is
 
     control.vs = 0;
+
+    std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set motionless state:";
+    dumpMutableState(control);
+    std::cout << std::flush;
 }
 
 static bool doDisplay(const ReadonlyState &state) {
-    return state.agl < 10 || (stateRequestDispatchCounter % 50) == 0;
+    return state.agl < 10 || (stateRequestDispatchCounter % 500) == 0;
 }
 
 static void setDirectControl(const ReadonlyState &ronly, const MutableState &control) {
@@ -416,31 +426,59 @@ static bool setVerticalSpeed(double throttle, double timeSinceLast, MutableState
 }
 
 static bool aboveGround(const ReadonlyState &state) {
-    return (!state.onGround && state.agl > static_cg_height + 1);
+    // Use hysteresis to avoid toggling freeze back and forth. When we are controlling the aircraft
+    // (simFrozen true), we decide that we are landing when the AGL below above static_cg_height + 1.
+    // When we are not controlling the aircraft (letting it land "softly" by itself, we require AGL to be one
+    // foot higher to decide we are not landing any more.
+
+    assert(!(landing && takingOff));
+
+    if (simFrozen && !landing && !takingOff)
+        return state.agl > static_cg_height + 1;
+    else if (takingOff)
+        return true;
+    else
+        return (!state.onGround && state.agl > static_cg_height + 2);
 }
 
 static void freezeSimulation(const ReadonlyState &state) {
-    if (!state.altFreeze)
+    if (!state.altFreeze) {
+        std::cout << THISAIRCRAFT ": Freezing ALT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAltSet, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
-    if (!state.attFreeze)
+    }
+    if (!state.attFreeze) {
+        std::cout << THISAIRCRAFT ": Freezing ATT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAttSet, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
-    if (!state.posFreeze)
+    }
+    if (!state.posFreeze) {
+        std::cout << THISAIRCRAFT ": Freezing POS" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezePosSet, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+    }
+    simFrozen = true;
 }
 
 static void unfreezeSimulation(const ReadonlyState &state) {
-    if (state.altFreeze)
+    if (state.altFreeze) {
+        std::cout << THISAIRCRAFT ": Unfreezing ALT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAltSet, FALSE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
-    if (state.attFreeze)
+    }
+    if (state.attFreeze) {
+        std::cout << THISAIRCRAFT ": Unfreezing ATT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAttSet, FALSE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
-    if (state.posFreeze)
+    }
+#if 0 // We never want to let the simulator move the aircraft as it seems to let the wind affect it wildly
+    if (state.posFreeze) {
+        std::cout << THISAIRCRAFT ": Unfreezing POS" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezePosSet, FALSE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+    }
+#endif
+    simFrozen = false;
 }
 
 static void handleState(const AllState &state) {
@@ -470,6 +508,12 @@ static void handleState(const AllState &state) {
         return;
     }
 
+    ++stateRequestDispatchCounter;
+
+    // Ignore first couple of state callbacks
+    if (stateRequestDispatchCounter < 5)
+        return;
+
     if (!ignitionSwitch && state.readonly.ignitionSwitch) {
         ignitionSwitch = true;
         freezeSimulation(state.readonly);
@@ -477,8 +521,6 @@ static void handleState(const AllState &state) {
     } else if (!state.readonly.ignitionSwitch) {
         return;
     }
-
-    ++stateRequestDispatchCounter;
 
     if (doDisplay(state.readonly)) {
         std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
@@ -489,12 +531,24 @@ static void handleState(const AllState &state) {
         std::cout << std::flush;
     }
 
+    // We want the parking brake to be always on when on ground
+    if (state.readonly.onGround && state.readonly.parkingBrake < 0.5) {
+        std::cout << THISAIRCRAFT ": Setting parking brake" << std::flush;
+        RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventParkingBrakeToggle, TRUE,
+                                              SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
+    }
+
     std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
     static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
     auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
 
+    // std::cout << THISAIRCRAFT ": timeSinceLast:" << timeSinceLast << std::flush;
+
     // Obviously we can turn and move only in the air
     if (aboveGround(state.readonly)) {
+
+        if (state.readonly.agl > static_cg_height + 2)
+            takingOff = false;
 
         // Make sure the simulator itself is not trying to move the aircraft.
         freezeSimulation(state.readonly);
@@ -551,7 +605,6 @@ static void handleState(const AllState &state) {
             setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
         }
         setDirectControl(state.readonly, directControl);
-        lastTime = now;
     } else {
 
         assert(!aboveGround(state.readonly));
@@ -559,11 +612,13 @@ static void handleState(const AllState &state) {
         // Vertical velocity however can be changed while on the ground. We can lift off.
 
         if (throttle2vs(state.readonly.throttle) > 0) {
+            landing = false;
+            takingOff = true;
             setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
             freezeSimulation(state.readonly);
             setDirectControl(state.readonly, directControl);
-            lastTime = now;
         } else if (gotFirstState) {
+            landing = true;
             setMotionlessState(state.state, directControl);
             setDirectControl(state.readonly, directControl);
 
@@ -573,6 +628,7 @@ static void handleState(const AllState &state) {
             gotFirstState = false;
         }
     }
+    lastTime = now;
 }
 
 static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
@@ -670,6 +726,7 @@ static void initialize() {
     RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAltSet, "FREEZE_ALTITUDE_SET"));
     RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezeAttSet, "FREEZE_ATTITUDE_SET"));
     RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventFreezePosSet, "FREEZE_LATITUDE_LONGITUDE_SET"));
+    RECORD(SimConnect_MapClientEventToSimEvent(hSimConnect, EventParkingBrakeToggle, "PARKING_BRAKES"));
 
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "RUDDER PEDAL POSITION", "position",
@@ -713,6 +770,10 @@ static void initialize() {
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "MASTER IGNITION SWITCH", "boolean",
                                           SIMCONNECT_DATATYPE_INT64));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "BRAKE PARKING POSITION", "position",
+                                          SIMCONNECT_DATATYPE_FLOAT64,
+                                          0));
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "IS ALTITUDE FREEZE ON", "boolean",
                                           SIMCONNECT_DATATYPE_INT64));
