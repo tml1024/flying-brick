@@ -79,6 +79,8 @@ struct AllState {
     MutableState state;
 };
 
+static constexpr bool verbose = false;
+
 // As soon as an API call fails or we get an exception we are in an unknown state and it is not worth
 // to continue attempting to do anything.
 static bool failed = false;
@@ -389,9 +391,11 @@ static void setMotionlessState(const MutableState &state, MutableState &control)
 
     control.vs = 0;
 
-    std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set motionless state:";
-    dumpMutableState(control);
-    std::cout << std::flush;
+    if (verbose) {
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set motionless state:";
+        dumpMutableState(control);
+        std::cout << std::flush;
+    }
 }
 
 static bool doDisplay(const ReadonlyState &state) {
@@ -399,7 +403,7 @@ static bool doDisplay(const ReadonlyState &state) {
 }
 
 static void setDirectControl(const ReadonlyState &ronly, const MutableState &control) {
-    if (doDisplay(ronly)) {
+    if (verbose && doDisplay(ronly)) {
         std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set state:";
         dumpMutableState(control);
         std::cout << std::flush;
@@ -443,17 +447,20 @@ static bool aboveGround(const ReadonlyState &state) {
 
 static void freezeSimulation(const ReadonlyState &state) {
     if (!state.altFreeze) {
-        std::cout << THISAIRCRAFT ": Freezing ALT" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Freezing ALT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAltSet, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
     if (!state.attFreeze) {
-        std::cout << THISAIRCRAFT ": Freezing ATT" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Freezing ATT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAttSet, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
     if (!state.posFreeze) {
-        std::cout << THISAIRCRAFT ": Freezing POS" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Freezing POS" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezePosSet, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
@@ -462,18 +469,21 @@ static void freezeSimulation(const ReadonlyState &state) {
 
 static void unfreezeSimulation(const ReadonlyState &state) {
     if (state.altFreeze) {
-        std::cout << THISAIRCRAFT ": Unfreezing ALT" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Unfreezing ALT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAltSet, FALSE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
     if (state.attFreeze) {
-        std::cout << THISAIRCRAFT ": Unfreezing ATT" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Unfreezing ATT" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezeAttSet, FALSE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
 #if 0 // We never want to let the simulator move the aircraft as it seems to let the wind affect it wildly
     if (state.posFreeze) {
-        std::cout << THISAIRCRAFT ": Unfreezing POS" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Unfreezing POS" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventFreezePosSet, FALSE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
@@ -522,7 +532,7 @@ static void handleState(const AllState &state) {
         return;
     }
 
-    if (doDisplay(state.readonly)) {
+    if (verbose && doDisplay(state.readonly)) {
         std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
         dumpReadonlyState(state.readonly);
         std::cout << std::flush;
@@ -533,7 +543,8 @@ static void handleState(const AllState &state) {
 
     // We want the parking brake to be always on when on ground
     if (state.readonly.onGround && state.readonly.parkingBrake < 0.5) {
-        std::cout << THISAIRCRAFT ": Setting parking brake" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Setting parking brake" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventParkingBrakeToggle, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
@@ -541,8 +552,6 @@ static void handleState(const AllState &state) {
     std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
     static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
     auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
-
-    // std::cout << THISAIRCRAFT ": timeSinceLast:" << timeSinceLast << std::flush;
 
     // Obviously we can turn and move only in the air
     if (aboveGround(state.readonly)) {
@@ -642,24 +651,29 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
         switch(event->uEventID) {
         case EventPause:
             simPaused = event->dwData;
-            std::cout << THISAIRCRAFT ": PAUSE " << (simPaused ? "ON" : "OFF") << std::flush;
+            if (verbose)
+                std::cout << THISAIRCRAFT ": PAUSE " << (simPaused ? "ON" : "OFF") << std::flush;
             break;
         default:
-            std::cout << THISAIRCRAFT ": EVENT " << event->uEventID << " " << event->dwData << std::flush;
+            if (verbose)
+                std::cout << THISAIRCRAFT ": EVENT " << event->uEventID << " " << event->dwData << std::flush;
             break;
         }
         break;
     }
     case SIMCONNECT_RECV_ID_EVENT_FILENAME: {
         SIMCONNECT_RECV_EVENT_FILENAME *filename = (SIMCONNECT_RECV_EVENT_FILENAME*)pData;
-        std::cout << THISAIRCRAFT ": EVENT_FILENAME "
-                  << filename->szFileName;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": EVENT_FILENAME "
+                      << filename->szFileName;
         switch (filename->uEventID) {
         default:
-            std::cout << " " << filename->uEventID;
+            if (verbose)
+                std::cout << " " << filename->uEventID;
             break;
         }
-        std::cout << std::endl;
+        if (verbose)
+            std::cout << std::endl;
         break;
     }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
@@ -692,7 +706,8 @@ static bool flight_model_callback(const char *Section, const char *Key, const ch
         && strcasecmp(Key, "static_cg_height") == 0) {
 
         static_cg_height = strtod(Value, NULL);
-        std::cout << THISAIRCRAFT ": Static CG height from flight_model.cfg: " << static_cg_height << "ft" << std::flush;
+        if (verbose)
+            std::cout << THISAIRCRAFT ": Static CG height from flight_model.cfg: " << static_cg_height << "ft" << std::flush;
 
         // That is all we want.
         return false;
@@ -710,7 +725,6 @@ static void initialize() {
         std::cerr << THISAIRCRAFT ": SimConnect_Open failed" << std::flush;
         return;
     }
-    std::cout << THISAIRCRAFT ": Connected" << std::flush;
 
     // Read our flight_model.cfg to avoid having to duplicate some information as magic numbers in this file.
     ini_browse(flight_model_callback, NULL, ".\\SimObjects\\Airplanes\\" THISAIRCRAFT "\\flight_model.cfg");
