@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include <string>
 
 #pragma GCC diagnostic push
@@ -92,7 +93,11 @@ static HRESULT recordCall(int lineNumber,
                           std::string call,
                           HRESULT value) {
     if (!SUCCEEDED(value)) {
-        std::cerr << THISAIRCRAFT ": The call '" << call << "' failed at line " << lineNumber << std::flush;
+        // Output to std::cerr is unbuffered, and appears in the Console window each part on a separate line.
+        // Not ideal. So collect output to std::cerr into one string and write it in one go.
+        std::stringstream output;
+        output << THISAIRCRAFT ": The call '" << call << "' failed at line " << lineNumber;
+        std::cerr << output.str() << std::flush;
         failed = true;
         return value;
     }
@@ -602,11 +607,12 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
     }
     case SIMCONNECT_RECV_ID_EXCEPTION: {
         SIMCONNECT_RECV_EXCEPTION *exception = (SIMCONNECT_RECV_EXCEPTION*)pData;
-        std::cerr << THISAIRCRAFT ": EXCEPTION "
-                  << exception_type(exception->dwException) << " "
-                  << (calls.count(exception->dwSendID) ? ("from " + calls[exception->dwSendID]) : "from unknown API call") << " "
-                  << exception->dwIndex
-                  << std::flush;
+        std::stringstream output;
+        output << THISAIRCRAFT ": EXCEPTION "
+               << exception_type(exception->dwException) << " "
+               << (calls.count(exception->dwSendID) ? ("from " + calls[exception->dwSendID]) : "from unknown API call") << " "
+               << exception->dwIndex;
+        std::cerr << output.str() << std::flush;
         failed = true;
         break;
     }
