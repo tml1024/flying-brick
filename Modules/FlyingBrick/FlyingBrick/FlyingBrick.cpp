@@ -594,6 +594,18 @@ static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
         }
         break;
     }
+    case SIMCONNECT_RECV_ID_EVENT_FILENAME: {
+        SIMCONNECT_RECV_EVENT_FILENAME *filename = (SIMCONNECT_RECV_EVENT_FILENAME*)pData;
+        std::cout << THISAIRCRAFT ": EVENT_FILENAME "
+                  << filename->szFileName;
+        switch (filename->uEventID) {
+        default:
+            std::cout << " " << filename->uEventID;
+            break;
+        }
+        std::cout << std::endl;
+        break;
+    }
     case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
         SIMCONNECT_RECV_SIMOBJECT_DATA *data = (SIMCONNECT_RECV_SIMOBJECT_DATA*)pData;
         switch (data->dwRequestID) {
