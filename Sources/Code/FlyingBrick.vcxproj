@@ -47,12 +47,12 @@
     <GenerateManifest />
     <LinkIncremental />
     <IncludePath>$(MSFS_IncludePath)</IncludePath>
-    <OutDir>$(SolutionDir)..\..\Project\PackageSources\SimObjects\Airplanes\FlyingBrick\panel\</OutDir>
+    <OutDir>$(SolutionDir)..\..\PackageSources\SimObjects\Airplanes\FlyingBrick\panel\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|MSFS'">
     <TargetExt>.wasm</TargetExt>
     <IncludePath>$(MSFS_IncludePath)</IncludePath>
-    <OutDir>$(SolutionDir)..\..\Project\PackageSources\SimObjects\Airplanes\FlyingBrick\panel\</OutDir>
+    <OutDir>$(SolutionDir)..\..\PackageSources\SimObjects\Airplanes\FlyingBrick\panel\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|MSFS'">
     <ClCompile>

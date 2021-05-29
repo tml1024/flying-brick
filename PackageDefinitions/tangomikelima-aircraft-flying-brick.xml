@@ -28,5 +28,13 @@
             <AssetDir>PackageSources\SimObjects\Airplanes\FlyingBrick\</AssetDir>
             <OutputDir>SimObjects\Airplanes\FlyingBrick\</OutputDir>
         </AssetGroup>
+        <AssetGroup Name="source-code">
+            <Type>None</Type>
+            <Flags>
+                <FSXCompatibility>false</FSXCompatibility>
+            </Flags>
+            <AssetDir>Sources\</AssetDir>
+            <OutputDir>..\None\</OutputDir>
+        </AssetGroup>
     </AssetGroups>
 </AssetPackage>
