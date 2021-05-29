@@ -1,5 +1,6 @@
 // -*- comment-column: 50; fill-column: 110; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil -*-
 
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cmath>
@@ -24,6 +25,19 @@
 static HANDLE hSimConnect = 0;
 
 static double static_cg_height;
+
+static constexpr bool verbose = false;
+
+// As soon as an API call fails or we get an exception we are in an unknown state and it is not worth
+// to continue attempting to do anything.
+static bool failed = false;
+
+static bool simPaused = false;                    // Whether the "Paused" event with value 1 has been received
+static bool gotFirstState = false;
+static bool simFrozen = false;                    // Whether we are controlling the aircraft or not
+static bool landing = false;
+static bool takingOff = false;
+static bool ignitionSwitch = false;               // Whether the ignition switch was last seen on or off
 
 // Use different numeric ranges for the enums to recognize the values if they show up in unexpected places
 
@@ -78,54 +92,6 @@ struct AllState {
     ReadonlyState readonly;
     MutableState state;
 };
-
-static constexpr bool verbose = false;
-
-// As soon as an API call fails or we get an exception we are in an unknown state and it is not worth
-// to continue attempting to do anything.
-static bool failed = false;
-
-static bool simPaused = false;                    // Whether the "Paused" event with value 1 has been received
-static bool gotFirstState = false;
-static bool simFrozen = false;                    // Whether we are controlling the aircraft or not
-static bool landing = false;
-static bool takingOff = false;
-static bool ignitionSwitch = false;               // Whether the ignition switch was last seen on or off
-
-static int stateRequestDispatchCounter;
-
-static std::map<DWORD, std::string> calls;
-
-static HRESULT recordCall(int lineNumber,
-                          std::string call,
-                          HRESULT value) {
-    if (!SUCCEEDED(value)) {
-        // Output to std::cerr is unbuffered, and appears in the Console window each part on a separate line.
-        // Not ideal. So collect output to std::cerr into one string and write it in one go.
-        std::stringstream output;
-        output << THISAIRCRAFT ": The call '" << call << "' failed at line " << lineNumber;
-        std::cerr << output.str() << std::flush;
-        failed = true;
-        return value;
-    }
-
-    DWORD id;
-    SimConnect_GetLastSentPacketID(hSimConnect, &id);
-    calls[id] = call;
-
-    static uint64_t counter = 0;
-    if ((++counter % 100) == 0 && id > 100)
-    {
-        auto newestToRemove = calls.upper_bound(id - 100);
-        if (newestToRemove != calls.end())
-            calls.erase(calls.begin(), newestToRemove);
-    }
-
-    return value;
-}
-
-#define RECORD(expr) \
-    recordCall(__LINE__, #expr, expr);
 
 // Helper functions, don't warn if not used
 #pragma GCC diagnostic push
@@ -319,6 +285,8 @@ static std::string panel_service(int type) {
     }
 }
 
+#pragma GCC diagnostic pop
+
 static void dumpReadonlyState(const ReadonlyState &state) {
     std::cout << " rud:" << std::fixed << std::setw(5) << std::setprecision(2) << state.rudder
               << " ail:" << std::fixed << std::setw(5) << std::setprecision(2) << state.aileron
@@ -353,8 +321,159 @@ static void dumpMutableState(const MutableState &state) {
               << " vs:" << std::fixed << std::setw(6) << std::setprecision(1) << state.vs;
 }
 
-#pragma GCC diagnostic pop
+class AllStateHistory {
+private:
+    static constexpr auto HistoryLength = 10;
 
+    // How many array elements are in use. The ones at index current is always the latest.
+    int number;
+    int current;
+    int previous;
+
+    // How many times our callback has been called
+    int callbacks_;
+
+    // How many times we have stored new values into this struct
+    int rounds_;
+
+    // The history of state received from the sim
+    std::array<AllState, HistoryLength> input;
+
+    // Timestamps of the inputs
+    std::array<std::chrono::time_point<std::chrono::steady_clock>, HistoryLength> time;
+
+    // The history of state set into the sim
+    std::array<MutableState, HistoryLength> output_;
+
+public:
+    AllStateHistory()
+        : number(0),
+          current(0),
+          previous(0),
+          callbacks_(0),
+          rounds_(0)
+    {
+    }
+
+    int bumpCallbacks() {
+        return ++callbacks_;
+    }
+
+    void bump(const AllState &receivedInput) {
+        rounds_++;
+
+        if (number < HistoryLength)
+            number++;
+
+        previous = current;
+        current = (current + 1) % HistoryLength;
+        input[current] = receivedInput;
+        output_[current] = output_[previous];
+        time[current] = std::chrono::steady_clock::now();
+    }
+
+    int callbacks() const {
+        return callbacks_;
+    }
+
+    int rounds() const {
+        return rounds_;
+    }
+
+    const ReadonlyState& readonly() const {
+        return input[current].readonly;
+    }
+
+    const MutableState& state() const {
+        return input[current].state;
+    }
+
+    MutableState& output() {
+        return output_[current];
+    }
+
+    int milliSecondsSinceLast() const {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(time[current] - time[previous]).count();
+    }
+
+    void setMotionless() {
+        // Set the desired initial state: motionless
+
+        std::cout << THISAIRCRAFT << ": setMotionless()" << std::flush;
+
+        output() = input[current].state;
+
+        // Keep heading as is
+
+        output().bank = output().pitch = 0;
+
+        // Keep lat, lon, msl as is
+
+        output().velBodyX = output().velBodyY = output().velBodyZ = 0;
+        output().velWorldX = output().velWorldY = output().velWorldZ = 0;
+
+        output().kias = output().ktas = 0;
+
+        // Keep alt as is
+
+        output().vs = 0;
+
+        if (verbose) {
+            std::cout << THISAIRCRAFT ": " << std::setw(5) << callbacks() << " Set motionless state:";
+            dumpMutableState(output());
+            std::cout << std::flush;
+        }
+    }
+
+    bool aboveGround() {
+        // Use hysteresis to avoid toggling freeze back and forth. When we are controlling the aircraft
+        // (simFrozen true), we decide that we are landing when the AGL below above static_cg_height + 1.
+        // When we are not controlling the aircraft (letting it land "softly" by itself, we require AGL to be one
+        // foot higher to decide we are not landing any more.
+
+        assert(!(landing && takingOff));
+
+        if (simFrozen && !landing && !takingOff)
+            return readonly().agl > static_cg_height + 1;
+        else if (takingOff)
+            return true;
+        else
+            return (!readonly().onGround && readonly().agl > static_cg_height + 2);
+    }
+};
+
+static std::map<DWORD, std::string> calls;
+
+static HRESULT recordCall(int lineNumber,
+                          std::string call,
+                          HRESULT value) {
+    if (!SUCCEEDED(value)) {
+        // Output to std::cerr is unbuffered, and appears in the Console window each part on a separate line.
+        // Not ideal. So collect output to std::cerr into one string and write it in one go.
+        std::stringstream output;
+        output << THISAIRCRAFT ": The call '" << call << "' failed at line " << lineNumber;
+        std::cerr << output.str() << std::flush;
+        failed = true;
+        return value;
+    }
+
+    DWORD id;
+    SimConnect_GetLastSentPacketID(hSimConnect, &id);
+    calls[id] = call;
+
+    static uint64_t counter = 0;
+    if ((++counter % 100) == 0 && id > 100)
+    {
+        auto newestToRemove = calls.upper_bound(id - 100);
+        if (newestToRemove != calls.end())
+            calls.erase(calls.begin(), newestToRemove);
+    }
+
+    return value;
+}
+
+#define RECORD(expr) \
+    recordCall(__LINE__, #expr, expr);
 
 constexpr auto HUNDREDTH = 0.01;
 
@@ -371,49 +490,24 @@ static double throttle2vs(double throttle) {
         return 0;
 }
 
-static void setMotionlessState(const MutableState &state, MutableState &control) {
-    // Set the desired initial state: motionless
-
-    control = state;
-
-    // Keep heading as is
-
-    control.bank = control.pitch = 0;
-
-    // Keep lat, lon, msl as is
-
-    control.velBodyX = control.velBodyY = control.velBodyZ = 0;
-    control.velWorldX = control.velWorldY = control.velWorldZ = 0;
-
-    control.kias = control.ktas = 0;
-
-    // Keep alt as is
-
-    control.vs = 0;
-
-    if (verbose) {
-        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set motionless state:";
-        dumpMutableState(control);
-        std::cout << std::flush;
-    }
+static bool doDisplay(const AllStateHistory &state) {
+    // For now, display when we are close to ground and for five sequential callbacks every 500 callbacks.
+    return state.readonly().agl < 10 || (state.rounds() % 500) < 5;
 }
 
-static bool doDisplay(const ReadonlyState &state) {
-    return state.agl < 10 || (stateRequestDispatchCounter % 500) == 0;
-}
-
-static void setDirectControl(const ReadonlyState &ronly, const MutableState &control) {
-    if (verbose && doDisplay(ronly)) {
-        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Set state:";
-        dumpMutableState(control);
+static void setDirectControl(AllStateHistory &state) {
+    if (verbose && doDisplay(state)) {
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << state.callbacks() << " Set state:";
+        dumpMutableState(state.output());
         std::cout << std::flush;
     }
+    assert(sizeof(MutableState) == sizeof(state.output()));
     RECORD(SimConnect_SetDataOnSimObject(hSimConnect, DataDefinitionMutableState,
                                          SIMCONNECT_OBJECT_ID_USER, 0,
-                                         0, sizeof(MutableState), (void*)&control));
+                                         0, sizeof(MutableState), (void*)&state.output()));
 }
 
-static bool setVerticalSpeed(double throttle, double timeSinceLast, MutableState &control) {
+static void setVerticalSpeed(double throttle, double timeSinceLast, MutableState &control) {
     const double vs = throttle2vs(throttle);
     if (vs != 0) {
         control.velBodyY = vs;
@@ -423,26 +517,9 @@ static bool setVerticalSpeed(double throttle, double timeSinceLast, MutableState
         control.alt += diffY;
         control.msl += diffY;
         control.vs = fps2fpm(vs);
-
-        return true;
+    } else {
+        control.velBodyY = control.velWorldY = control.vs = 0;
     }
-    return false;
-}
-
-static bool aboveGround(const ReadonlyState &state) {
-    // Use hysteresis to avoid toggling freeze back and forth. When we are controlling the aircraft
-    // (simFrozen true), we decide that we are landing when the AGL below above static_cg_height + 1.
-    // When we are not controlling the aircraft (letting it land "softly" by itself, we require AGL to be one
-    // foot higher to decide we are not landing any more.
-
-    assert(!(landing && takingOff));
-
-    if (simFrozen && !landing && !takingOff)
-        return state.agl > static_cg_height + 1;
-    else if (takingOff)
-        return true;
-    else
-        return (!state.onGround && state.agl > static_cg_height + 2);
 }
 
 static void freezeSimulation(const ReadonlyState &state) {
@@ -491,153 +568,158 @@ static void unfreezeSimulation(const ReadonlyState &state) {
     simFrozen = false;
 }
 
-static void handleState(const AllState &state) {
+static void handleState(const AllState &input) {
             
     // If paused, do nothing
     if (simPaused)
         return;
 
-    static MutableState directControl;
-
     // Check if we are in a "zombie" state when the sim is in the main menu, at "Null Island" (0N 0E).
-    // In that case, do nothing.
-    if (std::abs(state.state.lat) < 0.0001 && std::abs(state.state.lon) < 0.0001)
+    // In that case, do nothing.1
+    if (std::abs(input.state.lat) < 0.0001 && std::abs(input.state.lon) < 0.0001)
         return;
 
     // Another "zombie" state: Deep down under ground or up in the stratosphere.
-    if (state.readonly.agl < -100 || state.readonly.agl > 100000 || state.state.msl < -100 || state.state.msl > 100000)
+    if (input.readonly.agl < -100 || input.readonly.agl > 100000
+        || input.state.msl < -100 || input.state.msl > 100000)
         return;
 
     // If ignition switch off, do nothing. When turning it off, let the simulator handle the aircraft
     // falling down, typically. When turning it on, take control.
 
-    if (ignitionSwitch && !state.readonly.ignitionSwitch) {
+    if (ignitionSwitch && !input.readonly.ignitionSwitch) {
         ignitionSwitch = false;
-        unfreezeSimulation(state.readonly);
+        unfreezeSimulation(input.readonly);
         gotFirstState = false;
         return;
     }
 
-    ++stateRequestDispatchCounter;
+    static AllStateHistory state;
 
     // Ignore first couple of state callbacks
-    if (stateRequestDispatchCounter < 5)
+    if (state.bumpCallbacks() < 5)
         return;
 
-    if (!ignitionSwitch && state.readonly.ignitionSwitch) {
+    state.bump(input);
+
+    MutableState& control = state.output();
+
+    if (!ignitionSwitch && state.readonly().ignitionSwitch) {
         ignitionSwitch = true;
-        freezeSimulation(state.readonly);
-        setMotionlessState(state.state, directControl);
-    } else if (!state.readonly.ignitionSwitch) {
+        freezeSimulation(state.readonly());
+        std::cout << THISAIRCRAFT << ": line " << __LINE__ << std::flush;
+        state.setMotionless();
+    } else if (!state.readonly().ignitionSwitch) {
         return;
     }
 
-    if (verbose && doDisplay(state.readonly)) {
-        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got RO state:";
-        dumpReadonlyState(state.readonly);
+    if (verbose && doDisplay(state)) {
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << state.callbacks() << " Got RO state:";
+        dumpReadonlyState(state.readonly());
         std::cout << std::flush;
-        std::cout << THISAIRCRAFT ": " << std::setw(5) << stateRequestDispatchCounter << " Got state:";
-        dumpMutableState(state.state);
+        std::cout << THISAIRCRAFT ": " << std::setw(5) << state.callbacks() << " Got state:";
+        dumpMutableState(state.state());
         std::cout << std::flush;
     }
 
     // We want the parking brake to be always on when on ground
-    if (state.readonly.onGround && state.readonly.parkingBrake < 0.5) {
+    if (state.readonly().onGround && state.readonly().parkingBrake < 0.5) {
         if (verbose)
             std::cout << THISAIRCRAFT ": Setting parking brake" << std::flush;
         RECORD(SimConnect_TransmitClientEvent(hSimConnect, SIMCONNECT_OBJECT_ID_USER, EventParkingBrakeToggle, TRUE,
                                               SIMCONNECT_GROUP_PRIORITY_HIGHEST_MASKABLE, SIMCONNECT_EVENT_FLAG_GROUPID_IS_PRIORITY));
     }
 
-    std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
-    static std::chrono::time_point<std::chrono::steady_clock> lastTime = now;
-    auto timeSinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
+    auto timeSinceLast = state.milliSecondsSinceLast();
 
     // Obviously we can turn and move only in the air
-    if (aboveGround(state.readonly)) {
+    if (state.aboveGround()) {
 
-        if (state.readonly.agl > static_cg_height + 2)
+        if (state.readonly().agl > static_cg_height + 2)
             takingOff = false;
 
         // Make sure the simulator itself is not trying to move the aircraft.
-        freezeSimulation(state.readonly);
+        freezeSimulation(state.readonly());
 
         if (!gotFirstState) {
-            setMotionlessState(state.state, directControl);
-            ignitionSwitch = state.readonly.ignitionSwitch;
+            std::cout << THISAIRCRAFT << ": line " << __LINE__ << std::flush;
+            state.setMotionless();
+            ignitionSwitch = state.readonly().ignitionSwitch;
             gotFirstState = true;
         } else {
             // Arbitrary choice: Full rudder pedal deflection means 45 degrees per second yaw rate.
-            auto diff = state.readonly.rudder * timeSinceLast / 1000 * deg2rad(45);
-            directControl.heading += diff;
-            while (directControl.heading >= 2 * M_PI)
-                directControl.heading -= 2 * M_PI;
-            while (directControl.heading < 0)
-                directControl.heading += 2 * M_PI;
+            auto diff = state.readonly().rudder * timeSinceLast / 1000 * deg2rad(45);
+            control.heading += diff;
+            while (control.heading >= 2 * M_PI)
+                control.heading -= 2 * M_PI;
+            while (control.heading < 0)
+                control.heading += 2 * M_PI;
 
             // Another arbitrary choice: Full elevator control deflection means 100 knots GS
             // forward or 50 knots backward. Full aileron control deflection means 50 knots left or right.
 
             // Stick pushed forward: negative elevator input, set speed forward.
             // Stick pulled back: positive elevator input, set speed backward.
-            if (state.readonly.elevator < -HUNDREDTH)
-                directControl.velBodyZ = -state.readonly.elevator * kn2fps(100);
-            else if (state.readonly.elevator > HUNDREDTH)
-                directControl.velBodyZ = -state.readonly.elevator * kn2fps(50);
+            if (state.readonly().elevator < -HUNDREDTH)
+                control.velBodyZ = -state.readonly().elevator * kn2fps(100);
+            else if (state.readonly().elevator > HUNDREDTH)
+                control.velBodyZ = -state.readonly().elevator * kn2fps(50);
             else
-                directControl.velBodyZ = 0;
+                control.velBodyZ = 0;
 
             // Stick tilted sideways: aileron input, set speed sideways
-            if (std::abs(state.readonly.aileron) > HUNDREDTH)
-                directControl.velBodyX = state.readonly.aileron * kn2fps(50);
+            if (std::abs(state.readonly().aileron) > HUNDREDTH)
+                control.velBodyX = state.readonly().aileron * kn2fps(50);
             else
-                directControl.velBodyX = 0;
+                control.velBodyX = 0;
 
-            const double bodyRelativeAbsoluteVelocity = std::sqrt(directControl.velBodyZ * directControl.velBodyZ
-                                                                  + directControl.velBodyX * directControl.velBodyX);
-            const double bodyRelativeTrack = M_PI/2 - std::atan2(directControl.velBodyZ, directControl.velBodyX);
-            const double worldRelativeTrack = directControl.heading + bodyRelativeTrack;
+            const double bodyRelativeAbsoluteVelocity = std::sqrt(control.velBodyZ * control.velBodyZ
+                                                                  + control.velBodyX * control.velBodyX);
 
-            directControl.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
-            directControl.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+            const double bodyRelativeTrack = M_PI/2 - std::atan2(control.velBodyZ, control.velBodyX);
+
+            const double worldRelativeTrack = control.heading + bodyRelativeTrack;
+
+            control.velWorldZ = std::cos(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
+            control.velWorldX = std::sin(worldRelativeTrack) * bodyRelativeAbsoluteVelocity;
 
             // This is just a toy, so use a spherical Earth approximation and ignore the poles
             // and the antimeridian.
-            directControl.lat += directControl.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
-            directControl.lon += directControl.velWorldX * timeSinceLast / 1000 * std::cos(directControl.lat) / EARTH_RADIUS_FT;
+            control.lat += control.velWorldZ * timeSinceLast / 1000 / EARTH_RADIUS_FT;
+            control.lon += control.velWorldX * timeSinceLast / 1000 * std::cos(control.lat) / EARTH_RADIUS_FT;
 
             // Assume this aircraft is used only at low altitudes and ignore wind
-            directControl.kias = fps2kn(bodyRelativeAbsoluteVelocity);
-            directControl.ktas = directControl.kias;
+            control.kias = fps2kn(bodyRelativeAbsoluteVelocity);
+            control.ktas = control.kias;
 
             // Vertical speed and position handled in setVerticalSpeed().
-            setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
+            setVerticalSpeed(state.readonly().throttle, timeSinceLast, control);
         }
-        setDirectControl(state.readonly, directControl);
+        setDirectControl(state);
     } else {
 
-        assert(!aboveGround(state.readonly));
+        assert(!state.aboveGround());
 
         // Vertical velocity however can be changed while on the ground. We can lift off.
 
-        if (throttle2vs(state.readonly.throttle) > 0) {
+        if (throttle2vs(state.readonly().throttle) > 0) {
             landing = false;
             takingOff = true;
-            setVerticalSpeed(state.readonly.throttle, timeSinceLast, directControl);
-            freezeSimulation(state.readonly);
-            setDirectControl(state.readonly, directControl);
+            setVerticalSpeed(state.readonly().throttle, timeSinceLast, control);
+            freezeSimulation(state.readonly());
+            setDirectControl(state);
         } else if (gotFirstState) {
             landing = true;
-            setMotionlessState(state.state, directControl);
-            setDirectControl(state.readonly, directControl);
+            std::cout << THISAIRCRAFT << ": line " << __LINE__ << std::flush;
+            state.setMotionless();
+            setDirectControl(state);
 
             // Let the simulator itself handle it on ground
-            unfreezeSimulation(state.readonly);
+            unfreezeSimulation(state.readonly());
 
             gotFirstState = false;
         }
     }
-    lastTime = now;
 }
 
 static void dispatchProc(SIMCONNECT_RECV *pData, DWORD cbData, void *pContext) {
@@ -870,7 +952,6 @@ static void initialize() {
                                               10));
     }
 
-    stateRequestDispatchCounter = 0;
     gotFirstState = false;
     ignitionSwitch = false;
 
