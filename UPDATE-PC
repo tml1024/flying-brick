@@ -6,6 +6,7 @@ tar -c -f - \
     --exclude '.gitignore' \
     FlyingBrick.xml \
     FlyingBrick.blend \
+    PackageDefinitions \
     PackageSources \
     Sources/Code/*.cpp Sources/Code/*.h \
     | \
