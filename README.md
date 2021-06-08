@@ -2,13 +2,13 @@
 
 ## HELLO THERE!
 
-There are now over 30 people who have cloned this repo. But not a
-single contact. Please, if this is useful to you, or if you have
-improvement suggestions, don't be shy to open a discussion just to
-tell how it has helped you, file an issue, or even submit a PR here on
-GitHub. (But no personal email expecting personal replies please. That
-is not how open source works. Unless you have some business
-(contracting) proposal, but I am not really expecting such.)
+There are now over 30 people who have cloned this repo. But not many
+contacts. Please, if this is useful to you, or if you have improvement
+suggestions, don't be shy to open a discussion just to tell how it has
+helped you, file an issue, or even submit a PR here on GitHub. (But no
+personal email expecting personal replies please. That is not how open
+source works. Unless you have some business (contracting) proposal,
+but I am not really expecting such.)
 
 ## General
 
@@ -65,7 +65,9 @@ controls affect the velocities directly.
 
 ## Problems
 
-The behaviour when "landing" is broken. The state management in the
-Wasm module needs work.
+The behaviour when "landing" is slightly broken. The state management
+in the Wasm module needs work.
 
-There is annoying stutter in the view, especially close to ground.
+There is occasionally some stutter in the view, especially close to
+ground. But it seems to be better now than before the last MSFS Sim
+Update.
