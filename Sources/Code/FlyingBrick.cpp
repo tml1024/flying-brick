@@ -26,7 +26,7 @@ static HANDLE hSimConnect = 0;
 
 static double static_cg_height;
 
-static constexpr bool verbose = false;
+static constexpr bool verbose = true;
 
 // As soon as an API call fails or we get an exception we are in an unknown state and it is not worth
 // to continue attempting to do anything.
@@ -72,6 +72,7 @@ struct ReadonlyState {
     int64_t ignitionSwitch;
     double parkingBrake;
     int64_t altFreeze, attFreeze, posFreeze;
+    double pressure;
 };
 
 struct MutableState {
@@ -84,7 +85,6 @@ struct MutableState {
 
     // Instrument indications (only?)
     double kias, ktas;
-    double alt;
     double vs;
 };
 
@@ -297,7 +297,8 @@ static void dumpReadonlyState(const ReadonlyState &state) {
               << " gnd: " << (state.onGround ? "Y" : "N")
               << " ign: " << (state.ignitionSwitch ? "Y" : "N")
               << " brk:" << std::fixed << std::setw(5) << std::setprecision(2) << state.parkingBrake
-              << " frz: " << (state.altFreeze ? "Y" : "N") << (state.attFreeze ? "Y" : "N") << (state.posFreeze ? "Y" : "N");
+              << " frz: " << (state.altFreeze ? "Y" : "N") << (state.attFreeze ? "Y" : "N") << (state.posFreeze ? "Y" : "N")
+              << " pres:" << std::fixed << std::setw(8) << std::setprecision(6) << state.pressure;
 }
 
 static void dumpMutableState(const MutableState &state) {
@@ -317,7 +318,6 @@ static void dumpMutableState(const MutableState &state) {
               << " /"
               << " ias:" << std::fixed << std::setw(3) << std::setprecision(0) << state.kias
               << " tas:" << std::fixed << std::setw(3) << std::setprecision(0) << state.ktas
-              << " alt:"  << std::fixed << std::setw(6) << std::setprecision(1) << state.alt
               << " vs:" << std::fixed << std::setw(6) << std::setprecision(1) << state.vs;
 }
 
@@ -514,7 +514,6 @@ static void setVerticalSpeed(double throttle, double timeSinceLast, MutableState
         control.velWorldY = control.velBodyY;
 
         const double diffY = control.velWorldY * timeSinceLast / 1000;
-        control.alt += diffY;
         control.msl += diffY;
         control.vs = fps2fpm(vs);
     } else {
@@ -879,6 +878,9 @@ static void initialize() {
     RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
                                           "IS LATITUDE LONGITUDE FREEZE ON", "boolean",
                                           SIMCONNECT_DATATYPE_INT64));
+    RECORD(SimConnect_AddToDataDefinition(hSimConnect, DataDefinitionAllState,
+                                          "AMBIENT PRESSURE", "inHg",
+                                          SIMCONNECT_DATATYPE_FLOAT64));
 
 
     for (auto definition: {DataDefinitionAllState, DataDefinitionMutableState}) {
@@ -940,10 +942,6 @@ static void initialize() {
                                               10));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
                                               "AIRSPEED TRUE", "knots",
-                                              SIMCONNECT_DATATYPE_FLOAT64,
-                                              10));
-        RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
-                                              "INDICATED ALTITUDE", "feet",
                                               SIMCONNECT_DATATYPE_FLOAT64,
                                               10));
         RECORD(SimConnect_AddToDataDefinition(hSimConnect, definition,
