@@ -22,3 +22,7 @@ But! It isn't the copies that the exporter puts in the model folder
 that the Build All uses. It looks for the files in the texture folder.
 This is why the names should not contain multiple periods because the
 exported has converted the name in that case to use underscores.
+
+Maybe it would be less confusing to not keep textures as used by
+Blender in the PackageSources tree at all, and let the MSFS glTF
+exporter copy it them the texture folder?
