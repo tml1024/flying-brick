@@ -1,13 +1,18 @@
 #!/bin/sh
 
-tar -c -f - \
-    --exclude '*~' \
-    --exclude '*.orig' \
-    --exclude '.gitignore' \
-    FlyingBrick.xml \
-    FlyingBrick.blend \
-    PackageDefinitions \
-    PackageSources \
-    Sources/Code/*.cpp Sources/Code/*.h \
-    | \
-    (cd /Volumes/stinky/Users/tml/OneDrive/flying-brick && tar -x --unlink -v -f -)
+find FlyingBrick.xml \
+     FlyingBrick.blend \
+     PackageDefinitions \
+     PackageSources \
+     Sources/Code/*.cpp Sources/Code/*.h \
+     -type f |
+    grep -v -E -e '~$|\.orig$|/\.gitignore$|/.DS_Store$|\.PCK$' |
+    while read n; do
+	if [ -f STINKY/"$n" ]; then
+	    if [ `md5 -q "$n"` != `md5 -q STINKY/"$n"` ]; then
+		ls -l "$n" STINKY/"$n"
+		rm STINKY/"$n"
+		cp "$n" STINKY/"$n"
+	    fi
+	fi
+    done
