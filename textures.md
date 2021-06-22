@@ -12,7 +12,7 @@ changed in the export dialog.)
 The names of texture PNG files should not contain multiple periods.
 (Noticed in another project where I tried to use
 "Propeller.baked.png".) The glTF exporter converts extra periods to
-undercores when it copies them to the model folder, and in the
+underscores when it copies them to the model folder, and in the
 references in the glTF file.
 
 The Project Editor's Build All converts PNG to DDS textures and puts
