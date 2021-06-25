@@ -11,6 +11,12 @@
     </LODS>
     <Behaviors>
         <Include ModelBehaviorFile="Asobo\Exterior.xml"/>
+		<Include ModelBehaviorFile="Asobo\Common.xml"/>
+		<Component ID="HANDLING_Yokes">
+			<UseTemplate Name="ASOBO_HANDLING_Yoke_Template">
+				<NODE_ID>HANDLING_Yoke</NODE_ID>
+			</UseTemplate>
+        </Component>
         <Component ID="GEARS">
             <UseTemplate Name="ASOBO_GEAR_Base_Template">
 			    <ANIM_NAME>Front_left_leg</ANIM_NAME>
