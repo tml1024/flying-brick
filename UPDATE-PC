@@ -14,5 +14,8 @@ find FlyingBrick.xml \
 		rm STINKY/"$n"
 		cp "$n" STINKY/"$n"
 	    fi
+	else
+	    ls -l "$n"
+	    cp "$n" STINKY/"$n"
 	fi
     done
