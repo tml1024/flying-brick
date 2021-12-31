@@ -29,7 +29,7 @@
             <OutputDir>SimObjects\Airplanes\FlyingBrick\</OutputDir>
         </AssetGroup>
         <AssetGroup Name="source-code">
-            <Type>None</Type>
+            <Type>Copy</Type>
             <Flags>
                 <FSXCompatibility>false</FSXCompatibility>
             </Flags>
