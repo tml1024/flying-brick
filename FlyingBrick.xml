@@ -1,4 +1,4 @@
-<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+<?xml version="1.0" encoding="utf-8"?> <!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
 
 <Project Version="2" Name="FlyingBrick" FolderName="Packages">
     <OutputDirectory>.</OutputDirectory>

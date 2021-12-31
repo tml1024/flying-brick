@@ -1,9 +1,9 @@
-<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+<?xml version="1.0" encoding="utf-8"?> <!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
 
 <AssetPackage Name="tangomikelima-aircraft-flying-brick" Version="1.0.0">
     <ItemSettings>
         <ContentType>AIRCRAFT</ContentType>
-        <Title>Flying Brick</Title>b
+        <Title>Flying Brick</Title>
         <Manufacturer>Tango Mike Lima</Manufacturer>
         <Creator>Tango Mike Lima</Creator>
     </ItemSettings>
