@@ -10,6 +10,13 @@ personal email expecting personal replies please. That is not how open
 source works. Unless you have some business (contracting) proposal,
 but I am not really expecting such.)
 
+## Current state
+
+For some reason this thing seems to have become broken at some stage.
+Usually when you start flying it doesn't behave as it should. Both the
+horizontal and vertical speeds behave very oddly. Occastionally it
+does work as it used to, though. Oh well.
+
 ## General
 
 This is a sample aircraft for MSFS built from scratch, especially for
