@@ -10,12 +10,10 @@ personal email expecting personal replies please. That is not how open
 source works. Unless you have some business (contracting) proposal,
 but I am not really expecting such.)
 
-## Current state
+## Turn off the piloting assistance options
 
-For some reason this thing seems to have become broken at some stage.
-Usually when you start flying it doesn't behave as it should. Both the
-horizontal and vertical speeds behave very oddly. Occastionally it
-does work as it used to, though. Oh well.
+The piloting assistance options interfere with what the WASM code for
+the flying brick does. Turn them off.
 
 ## General
 
