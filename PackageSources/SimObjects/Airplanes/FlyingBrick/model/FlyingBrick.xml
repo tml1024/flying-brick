@@ -1,6 +1,5 @@
-<!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
+<?xml version="1.0" encoding="utf-8" ?> <!-- -*- nxml-child-indent: 4; tab-width: 4; indent-tabs-mode: nil -*- -->
 
-<?xml version="1.0" encoding="utf-8" ?>
 <ModelInfo>
     <LODS>
         <!-- Highest LOD -->
@@ -34,6 +33,15 @@
 			    <ANIM_NAME>Rear_right_leg</ANIM_NAME>
 			    <ID>3</ID>
             </UseTemplate>
+        </Component>
+        <Component ID="HACKS">
+            <Animation Guid="" Name="BONE1" Length="200" Type="Sim" TypeParam="AutoPlay">
+                <Parameter>
+                    <Code>
+                        (A:VELOCITY WORLD Z, knots) 100 +
+                    </Code>
+                </Parameter>
+            </Animation>
         </Component>
     </Behaviors>
 </ModelInfo>
