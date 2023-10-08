@@ -38,7 +38,9 @@
             <Animation Guid="" Name="BONE1" Length="200" Type="Sim" TypeParam="AutoPlay">
                 <Parameter>
                     <Code>
-                        (A:VELOCITY WORLD Z, knots) 100 +
+                        (A:ELEVATOR POSITION, position) sign
+                        (A:VELOCITY BODY Z, knots) *
+                        100 +
                     </Code>
                 </Parameter>
             </Animation>
