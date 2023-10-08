@@ -1,21 +1,27 @@
 #!/bin/sh
 
+PC=MYMLAN
+
 find FlyingBrick.xml \
      FlyingBrick.blend \
      PackageDefinitions \
      PackageSources \
-     Sources/Code/*.cpp Sources/Code/*.h \
+     Sources/Code/{*.cpp,*.h,*.sln,*.vcxproj} \
      -type f |
     grep -v -E -e '~$|\.orig$|/\.gitignore$|/.DS_Store$|\.PCK$' |
     while read n; do
-	if [ -f STINKY/"$n" ]; then
-	    if [ `md5 -q "$n"` != `md5 -q STINKY/"$n"` ]; then
-		ls -l "$n" STINKY/"$n"
-		rm STINKY/"$n"
-		cp "$n" STINKY/"$n"
+	dir=`dirname $PC/"$n"`
+	if [ ! -d "$dir" ]; then
+	    mkdir -p "$dir"
+	fi
+	if [ -f $PC/"$n" ]; then
+	    if [ `md5 -q "$n"` != `md5 -q $PC/"$n"` ]; then
+		ls -l "$n" $PC/"$n"
+		rm $PC/"$n"
+		cp "$n" $PC/"$n"
 	    fi
 	else
 	    ls -l "$n"
-	    cp "$n" STINKY/"$n"
+	    cp "$n" $PC/"$n"
 	fi
     done
